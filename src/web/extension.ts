@@ -1,22 +1,10 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import { WebDAVCredentials, WebDAVFileItem } from './types';
+import { WebDAVFileSearchProvider } from './fileSearchProvider';
+import { WebDAVTextSearchProvider } from './textSearchProvider';
 
-interface WebDAVCredentials {
-	url: string;
-	username: string;
-	password: string;
-	project?: string;
-}
-
-interface WebDAVFileItem {
-	name: string;
-	type: string;
-	size: string;
-	modified: string;
-	path: string;
-	isDirectory: boolean;
-}
 
 class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
@@ -383,6 +371,39 @@ class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		return html.replace(/<[^>]*>/g, '').trim();
 	}
 
+	async indexAllFiles(): Promise<void> {
+		debugLog('Starting full file indexing');
+		try {
+			await this.indexDirectory('');
+			debugLog('File indexing completed');
+		} catch (error: any) {
+			debugLog('Error during file indexing', { error: error.message });
+		}
+	}
+
+	private async indexDirectory(dirPath: string): Promise<void> {
+		try {
+			const items = await this.getDirectoryListing(dirPath);
+			
+			for (const item of items) {
+				const itemPath = dirPath ? `${dirPath}/${item.name}` : item.name;
+				const uri = vscode.Uri.parse(`webdav:/${itemPath}`);
+				
+				if (item.isDirectory) {
+					// Fire directory change event
+					this._emitter.fire([{ type: vscode.FileChangeType.Created, uri }]);
+					// Recursively index subdirectories
+					await this.indexDirectory(itemPath);
+				} else {
+					// Fire file change event to notify VS Code about the file
+					this._emitter.fire([{ type: vscode.FileChangeType.Created, uri }]);
+				}
+			}
+		} catch (error: any) {
+			debugLog('Error indexing directory', { dirPath, error: error.message });
+		}
+	}
+
 	private parseDirectoryHTMLFallback(html: string): WebDAVFileItem[] {
 		debugLog('Using fallback HTML parsing');
 		const items: WebDAVFileItem[] = [];
@@ -421,6 +442,10 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 
 	setRealProvider(provider: WebDAVFileSystemProvider | null) {
 		this._realProvider = provider;
+	}
+
+	getRealProvider(): WebDAVFileSystemProvider | null {
+		return this._realProvider;
 	}
 
 	watch(uri: vscode.Uri, options: { recursive: boolean; excludes: string[]; }): vscode.Disposable {
@@ -483,6 +508,7 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
 	}
 }
+
 
 class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'webdavConnection';
@@ -958,6 +984,18 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					debugLog('Real provider set in placeholder during auto-reconnect');
 				}
 
+				// Set credentials for search providers
+				if (globalFileSearchProvider) {
+					globalFileSearchProvider.setCredentials(this.credentials);
+					debugLog('Credentials set for file search provider during auto-reconnect');
+				}
+				if (globalTextSearchProvider) {
+					globalTextSearchProvider.setCredentials(this.credentials);
+					debugLog('Credentials set for text search provider during auto-reconnect');
+				}
+
+
+
 				// Update webview to show connected state
 				this.updateWebview();
 
@@ -1043,6 +1081,18 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				globalPlaceholderProvider.setRealProvider(this.fsProvider);
 				debugLog('Real provider set in placeholder');
 			}
+
+			// Set credentials for search providers
+			if (globalFileSearchProvider) {
+				globalFileSearchProvider.setCredentials(this.credentials);
+				debugLog('Credentials set for file search provider');
+			}
+			if (globalTextSearchProvider) {
+				globalTextSearchProvider.setCredentials(this.credentials);
+				debugLog('Credentials set for text search provider');
+			}
+
+
 			
 			debugLog('Updating webview...');
 			this.updateWebview();
@@ -1071,6 +1121,16 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		if (globalPlaceholderProvider) {
 			globalPlaceholderProvider.setRealProvider(null);
 		}
+
+		// Clear credentials from search providers
+		if (globalFileSearchProvider) {
+			globalFileSearchProvider.setCredentials(null);
+		}
+		if (globalTextSearchProvider) {
+			globalTextSearchProvider.setCredentials(null);
+		}
+
+
 		
 		this.updateWebview();
 		vscode.window.showInformationMessage('Disconnected from WebDAV server');
@@ -1092,6 +1152,18 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					globalPlaceholderProvider.setRealProvider(this.fsProvider);
 					debugLog('Real provider set in placeholder during restore');
 				}
+
+				// Set credentials for search providers
+				if (globalFileSearchProvider) {
+					globalFileSearchProvider.setCredentials(this.credentials);
+					debugLog('Credentials set for file search provider during restore');
+				}
+				if (globalTextSearchProvider) {
+					globalTextSearchProvider.setCredentials(this.credentials);
+					debugLog('Credentials set for text search provider during restore');
+				}
+
+
 				
 				this.updateWebview();
 				
@@ -1240,6 +1312,14 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			// The connection should remain intact
 			debugLog('Preserving connection state after workspace addition');
 			
+			// Index all files to make them searchable
+			if (this.fsProvider) {
+				setTimeout(async () => {
+					await this.fsProvider!.indexAllFiles();
+					debugLog('Files indexed after workspace addition');
+				}, 1000);
+			}
+			
 			// Force refresh the explorer to show the new files
 			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
 		} else {
@@ -1311,10 +1391,11 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
-let globalFsProvider: WebDAVFileSystemProvider | null = null;
 let debugOutput: vscode.OutputChannel;
 let globalPlaceholderProvider: PlaceholderFileSystemProvider;
 let globalContext: vscode.ExtensionContext;
+let globalFileSearchProvider: WebDAVFileSearchProvider;
+let globalTextSearchProvider: WebDAVTextSearchProvider;
 
 function debugLog(message: string, data?: any) {
 	const timestamp = new Date().toISOString();
@@ -1347,6 +1428,35 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.workspace.registerFileSystemProvider('webdav', globalPlaceholderProvider, { isCaseSensitive: false })
 	);
 	debugLog('Global placeholder provider registered');
+
+	// Initialize and register search providers
+	globalFileSearchProvider = new WebDAVFileSearchProvider();
+	globalTextSearchProvider = new WebDAVTextSearchProvider();
+	
+	// Set debug loggers for search providers
+	globalFileSearchProvider.setDebugLogger(debugLog);
+	globalTextSearchProvider.setDebugLogger(debugLog);
+	
+	try {
+		// Try to register search providers using experimental API
+		if ((vscode.workspace as any).registerFileSearchProvider) {
+			context.subscriptions.push(
+				(vscode.workspace as any).registerFileSearchProvider('webdav', globalFileSearchProvider)
+			);
+			debugLog('File search provider registered');
+		}
+		
+		if ((vscode.workspace as any).registerTextSearchProvider) {
+			context.subscriptions.push(
+				(vscode.workspace as any).registerTextSearchProvider('webdav', globalTextSearchProvider)
+			);
+			debugLog('Text search provider registered');
+		}
+	} catch (error: any) {
+		debugLog('Failed to register search providers', { error: error.message });
+	}
+
+
 
 	// Create WebView provider
 	const viewProvider = new WebDAVViewProvider(context.extensionUri);
@@ -1381,7 +1491,21 @@ export function activate(context: vscode.ExtensionContext) {
 		debugOutput.show();
 	});
 
+	const refreshWorkspaceCommand = vscode.commands.registerCommand('automate-webdav.refreshWorkspace', async () => {
+		debugLog('Refresh workspace command triggered');
+		
+		// Index all files to make them searchable
+		const realProvider = globalPlaceholderProvider?.getRealProvider();
+		if (realProvider) {
+			await realProvider.indexAllFiles();
+		}
+		
+		await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
+		vscode.window.showInformationMessage('WebDAV workspace refreshed and indexed');
+	});
+
 	context.subscriptions.push(showDebugCommand);
+	context.subscriptions.push(refreshWorkspaceCommand);
 }
 
 // This method is called when your extension is deactivated
