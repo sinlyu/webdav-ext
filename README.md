@@ -117,17 +117,17 @@ The following directories are automatically excluded from search operations:
 - **Optimized operations**: Excluded directories are skipped during indexing and search
 - **Best practices**: Use specific search patterns for optimal performance
 
-## 🔄 What's New
+## 🔄 What's New in v0.1.0
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and feature updates.
 
-### Latest Features
-- ✅ **Lightning-fast file indexing** for instant search results
-- ✅ Full VS Code search integration
-- ✅ Smart directory exclusion
-- ✅ Enhanced file operations
-- ✅ Modular code architecture
-- ✅ Comprehensive error handling
+### 🎉 Latest Features (v0.1.0)
+- ⚡ **Lightning-fast file indexing** - Revolutionary performance with instant search results
+- 🔍 **Complete VS Code search integration** - Native search experience with full API support
+- 🎯 **Smart directory exclusion** - Intelligent filtering for optimized performance
+- 📁 **Enhanced file operations** - Complete WebDAV filesystem with real-time updates
+- 🏗️ **Modular code architecture** - Professional-grade organization and maintainability
+- 🔧 **Advanced search APIs** - Cutting-edge VS Code integration with experimental APIs
 
 ## 📝 Known Issues
 

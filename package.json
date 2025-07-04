@@ -1,19 +1,37 @@
 {
   "name": "automate-webdav",
-  "displayName": "automate-webdav",
-  "description": "navigate through edoc automate apps via vscode",
-  "version": "0.0.1",
+  "displayName": "WebDAV Extension",
+  "description": "Lightning-fast WebDAV integration for VS Code with intelligent search and file indexing",
+  "version": "0.1.0",
   "publisher": "Sinlyu",
   "engines": {
     "vscode": "^1.101.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sinlyu/automate-webdav.git"
   },
   "enabledApiProposals": [
     "fileSearchProvider",
     "textSearchProvider"
   ],
   "categories": [
-    "Other"
+    "Other",
+    "SCM Providers"
   ],
+  "keywords": [
+    "webdav",
+    "file system",
+    "search",
+    "indexing",
+    "performance",
+    "remote files",
+    "cloud storage"
+  ],
+  "homepage": "https://github.com/Sinlyu/automate-webdav#readme",
+  "bugs": {
+    "url": "https://github.com/Sinlyu/automate-webdav/issues"
+  },
   "activationEvents": [],
   "browser": "./dist/web/extension.js",
   "contributes": {
