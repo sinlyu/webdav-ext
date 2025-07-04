@@ -5,6 +5,10 @@ Navigate through edoc automate apps and WebDAV resources directly within VS Code
 ## ✨ Features
 
 ### 🔍 **Powerful Search Integration**
+- **Lightning-Fast Performance**: Intelligent file indexing system provides instant search results
+  - Automatic file indexing on connection for sub-second file name searches
+  - Real-time index updates as files are created, modified, or deleted
+  - Smart fallback to directory traversal when needed
 - **Full VS Code Search Support**: Search through all files in your WebDAV workspace using VS Code's built-in search (Ctrl+Shift+F)
 - **File Name Search**: Find files using glob patterns (e.g., `*.js`, `**/*.md`)
 - **Content Search**: Search within text files with support for:
@@ -107,15 +111,18 @@ The following directories are automatically excluded from search operations:
 3. Review debug output for detailed error messages
 
 ### Performance
-- Large directories may take time to index
-- Search operations are optimized to skip excluded directories
-- Use specific search patterns for better performance
+- **Initial indexing**: Large directories are indexed automatically on connection (runs in background)
+- **Lightning-fast search**: File name searches use cached index for instant results
+- **Smart updates**: Index is updated automatically when files change
+- **Optimized operations**: Excluded directories are skipped during indexing and search
+- **Best practices**: Use specific search patterns for optimal performance
 
 ## 🔄 What's New
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and feature updates.
 
 ### Latest Features
+- ✅ **Lightning-fast file indexing** for instant search results
 - ✅ Full VS Code search integration
 - ✅ Smart directory exclusion
 - ✅ Enhanced file operations

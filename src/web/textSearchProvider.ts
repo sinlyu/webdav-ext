@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { WebDAVCredentials, WebDAVFileItem } from './types';
+import { WebDAVFileIndex } from './fileIndex';
 
 export class WebDAVTextSearchProvider {
 	private _credentials: WebDAVCredentials | null = null;
+	private _fileIndex: WebDAVFileIndex | null = null;
 
 	constructor(credentials: WebDAVCredentials | null = null) {
 		this._credentials = credentials;
@@ -10,6 +12,10 @@ export class WebDAVTextSearchProvider {
 
 	setCredentials(credentials: WebDAVCredentials | null) {
 		this._credentials = credentials;
+	}
+
+	setFileIndex(fileIndex: WebDAVFileIndex | null) {
+		this._fileIndex = fileIndex;
 	}
 
 	async provideTextSearchResults(
@@ -31,13 +37,58 @@ export class WebDAVTextSearchProvider {
 		});
 
 		try {
-			await this.searchInDirectory('', query, options, progress, token);
-			this.debugLog('Text search completed');
+			// Use index if available, otherwise fall back to directory traversal
+			if (this._fileIndex) {
+				await this._fileIndex.ensureIndexed();
+				await this.searchIndexedFiles(query, progress, token);
+				this.debugLog('Text search completed using index');
+			} else {
+				// Fallback to directory traversal
+				await this.searchInDirectory('', query, options, progress, token);
+				this.debugLog('Text search completed using directory traversal');
+			}
 			return { limitHit: false };
 		} catch (error: any) {
 			this.debugLog('Text search error', { error: error.message, stack: error.stack });
 			return { limitHit: false };
 		}
+	}
+
+	private async searchIndexedFiles(
+		query: any,
+		progress: vscode.Progress<any>,
+		token: vscode.CancellationToken
+	): Promise<void> {
+		if (!this._fileIndex) {
+			return;
+		}
+
+		this.debugLog('Starting indexed file search');
+		const allFiles = this._fileIndex.getAllFiles();
+		let searchedCount = 0;
+
+		for (const filePath of allFiles) {
+			if (token.isCancellationRequested) {
+				this.debugLog('Search cancelled during indexed search', { searchedFiles: searchedCount });
+				return;
+			}
+
+			const fileName = this.getFileName(filePath);
+			if (this.shouldSearchFile(fileName)) {
+				await this.searchInFile(filePath, query, progress, token);
+				searchedCount++;
+			}
+		}
+
+		this.debugLog('Indexed file search completed', { 
+			totalFiles: allFiles.length, 
+			searchedFiles: searchedCount 
+		});
+	}
+
+	private getFileName(filePath: string): string {
+		const lastSlash = filePath.lastIndexOf('/');
+		return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath;
 	}
 
 	private async searchInDirectory(

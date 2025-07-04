@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { WebDAVCredentials, WebDAVFileItem } from './types';
 import { WebDAVFileSearchProvider } from './fileSearchProvider';
 import { WebDAVTextSearchProvider } from './textSearchProvider';
+import { WebDAVFileIndex } from './fileIndex';
 
 
 class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
@@ -83,6 +84,11 @@ class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		const dirPath = this.getParentPath(uri.path);
 		await this.createFolder(folderName, dirPath);
 		this._emitter.fire([{ type: vscode.FileChangeType.Created, uri }]);
+		
+		// Update file index
+		if (globalFileIndex) {
+			await globalFileIndex.onFileCreated(uri.path);
+		}
 	}
 
 	async readFile(uri: vscode.Uri): Promise<Uint8Array> {
@@ -116,6 +122,11 @@ class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		const contentString = new TextDecoder().decode(content);
 		await this.createFile(fileName, contentString, dirPath);
 		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+		
+		// Update file index
+		if (globalFileIndex) {
+			await globalFileIndex.onFileCreated(uri.path);
+		}
 	}
 
 	async delete(uri: vscode.Uri, _options: { recursive: boolean; }): Promise<void> {
@@ -123,6 +134,11 @@ class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		const dirPath = this.getParentPath(uri.path);
 		await this.deleteItem(itemName, dirPath);
 		this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
+		
+		// Update file index
+		if (globalFileIndex) {
+			await globalFileIndex.onFileDeleted(uri.path);
+		}
 	}
 
 	async rename(oldUri: vscode.Uri, newUri: vscode.Uri, _options: { overwrite: boolean; }): Promise<void> {
@@ -135,6 +151,11 @@ class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			{ type: vscode.FileChangeType.Deleted, uri: oldUri },
 			{ type: vscode.FileChangeType.Created, uri: newUri }
 		]);
+		
+		// Update file index
+		if (globalFileIndex) {
+			await globalFileIndex.onFileRenamed(oldUri.path, newUri.path);
+		}
 	}
 
 	private getFileName(path: string): string {
@@ -993,6 +1014,14 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					globalTextSearchProvider.setCredentials(this.credentials);
 					debugLog('Credentials set for text search provider during auto-reconnect');
 				}
+				if (globalFileIndex) {
+					globalFileIndex.setCredentials(this.credentials);
+					// Start indexing after credentials are set
+					globalFileIndex.rebuildIndex().catch(error => {
+						debugLog('Error rebuilding index during auto-reconnect', { error: error.message });
+					});
+					debugLog('Credentials set for file index during auto-reconnect');
+				}
 
 
 
@@ -1091,6 +1120,14 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				globalTextSearchProvider.setCredentials(this.credentials);
 				debugLog('Credentials set for text search provider');
 			}
+			if (globalFileIndex) {
+				globalFileIndex.setCredentials(this.credentials);
+				// Start indexing after credentials are set
+				globalFileIndex.rebuildIndex().catch(error => {
+					debugLog('Error rebuilding index during connect', { error: error.message });
+				});
+				debugLog('Credentials set for file index');
+			}
 
 
 			
@@ -1129,6 +1166,9 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		if (globalTextSearchProvider) {
 			globalTextSearchProvider.setCredentials(null);
 		}
+		if (globalFileIndex) {
+			globalFileIndex.setCredentials(null);
+		}
 
 
 		
@@ -1161,6 +1201,14 @@ class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				if (globalTextSearchProvider) {
 					globalTextSearchProvider.setCredentials(this.credentials);
 					debugLog('Credentials set for text search provider during restore');
+				}
+				if (globalFileIndex) {
+					globalFileIndex.setCredentials(this.credentials);
+					// Start indexing after credentials are set
+					globalFileIndex.rebuildIndex().catch(error => {
+						debugLog('Error rebuilding index during restore', { error: error.message });
+					});
+					debugLog('Credentials set for file index during restore');
 				}
 
 
@@ -1396,6 +1444,7 @@ let globalPlaceholderProvider: PlaceholderFileSystemProvider;
 let globalContext: vscode.ExtensionContext;
 let globalFileSearchProvider: WebDAVFileSearchProvider;
 let globalTextSearchProvider: WebDAVTextSearchProvider;
+let globalFileIndex: WebDAVFileIndex;
 
 function debugLog(message: string, data?: any) {
 	const timestamp = new Date().toISOString();
@@ -1432,10 +1481,16 @@ export function activate(context: vscode.ExtensionContext) {
 	// Initialize and register search providers
 	globalFileSearchProvider = new WebDAVFileSearchProvider();
 	globalTextSearchProvider = new WebDAVTextSearchProvider();
+	globalFileIndex = new WebDAVFileIndex();
 	
-	// Set debug loggers for search providers
+	// Set debug loggers for search providers and index
 	globalFileSearchProvider.setDebugLogger(debugLog);
 	globalTextSearchProvider.setDebugLogger(debugLog);
+	globalFileIndex.setDebugLogger(debugLog);
+	
+	// Set file index for search providers
+	globalFileSearchProvider.setFileIndex(globalFileIndex);
+	globalTextSearchProvider.setFileIndex(globalFileIndex);
 	
 	try {
 		// Try to register search providers using experimental API

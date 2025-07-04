@@ -7,6 +7,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 ### Added
+- **Performance-Optimized File Indexing**: Intelligent caching system for lightning-fast search
+  - Automatic file indexing on connection with real-time updates
+  - In-memory file index with instant file name lookups
+  - Automatic index updates on file create, delete, rename operations
+  - Fallback to directory traversal when index is unavailable
 - **VS Code Search Integration**: Full support for VS Code's built-in search functionality
   - File name search with glob pattern support
   - Content search within text files (supports .txt, .js, .ts, .json, .css, .html, .md, .py, and more)

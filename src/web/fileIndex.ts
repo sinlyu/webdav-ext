@@ -1,0 +1,394 @@
+import * as vscode from 'vscode';
+import { WebDAVCredentials, WebDAVFileItem } from './types';
+
+export interface IndexedFile {
+	path: string;
+	name: string;
+	isDirectory: boolean;
+	lastModified: number;
+}
+
+export class WebDAVFileIndex {
+	private _credentials: WebDAVCredentials | null = null;
+	private _fileIndex: Map<string, IndexedFile> = new Map();
+	private _directoryIndex: Map<string, Set<string>> = new Map();
+	private _isIndexing: boolean = false;
+	private _indexingPromise: Promise<void> | null = null;
+	private _debugLog: (message: string, data?: any) => void = () => {};
+
+	constructor(credentials: WebDAVCredentials | null = null) {
+		this._credentials = credentials;
+	}
+
+	setCredentials(credentials: WebDAVCredentials | null) {
+		this._credentials = credentials;
+		// Clear existing index when credentials change
+		this.clearIndex();
+	}
+
+	setDebugLogger(logger: (message: string, data?: any) => void) {
+		this._debugLog = logger;
+	}
+
+	clearIndex() {
+		this._fileIndex.clear();
+		this._directoryIndex.clear();
+		this._debugLog('File index cleared');
+	}
+
+	async ensureIndexed(): Promise<void> {
+		if (this._isIndexing && this._indexingPromise) {
+			// If indexing is already in progress, wait for it to complete
+			await this._indexingPromise;
+			return;
+		}
+
+		if (this._fileIndex.size === 0 && this._credentials) {
+			// Start indexing if not already done
+			await this.rebuildIndex();
+		}
+	}
+
+	async rebuildIndex(): Promise<void> {
+		if (!this._credentials) {
+			this._debugLog('Cannot rebuild index: no credentials');
+			return;
+		}
+
+		if (this._isIndexing) {
+			this._debugLog('Index rebuild already in progress');
+			return;
+		}
+
+		this._isIndexing = true;
+		this._debugLog('Starting file index rebuild');
+		
+		try {
+			this.clearIndex();
+			this._indexingPromise = this.indexDirectory('');
+			await this._indexingPromise;
+			this._debugLog('File index rebuild completed', { 
+				totalFiles: this._fileIndex.size,
+				totalDirectories: this._directoryIndex.size 
+			});
+		} catch (error: any) {
+			this._debugLog('Error rebuilding index', { error: error.message });
+			throw error;
+		} finally {
+			this._isIndexing = false;
+			this._indexingPromise = null;
+		}
+	}
+
+	private async indexDirectory(dirPath: string): Promise<void> {
+		try {
+			const items = await this.getDirectoryListing(dirPath);
+			const childPaths = new Set<string>();
+			
+			for (const item of items) {
+				const itemPath = dirPath ? `${dirPath}/${item.name}` : item.name;
+				childPaths.add(itemPath);
+				
+				const indexedFile: IndexedFile = {
+					path: itemPath,
+					name: item.name,
+					isDirectory: item.isDirectory,
+					lastModified: Date.now() // WebDAV doesn't always provide reliable timestamps
+				};
+				
+				this._fileIndex.set(itemPath, indexedFile);
+				
+				if (item.isDirectory && this.shouldIndexDirectory(item.name)) {
+					// Recursively index subdirectories
+					await this.indexDirectory(itemPath);
+				}
+			}
+			
+			// Store directory contents for quick lookup
+			this._directoryIndex.set(dirPath, childPaths);
+			
+		} catch (error: any) {
+			this._debugLog('Error indexing directory', { dirPath, error: error.message });
+		}
+	}
+
+	private shouldIndexDirectory(dirName: string): boolean {
+		// Skip common directories that shouldn't be indexed
+		const excludedDirs = [
+			'.git',
+			'.svn',
+			'.hg',
+			'node_modules',
+			'.vscode',
+			'.idea',
+			'dist',
+			'build',
+			'target',
+			'bin',
+			'obj',
+			'.cache',
+			'.tmp',
+			'temp',
+			'.DS_Store'
+		];
+		
+		const lowerDirName = dirName.toLowerCase();
+		return !excludedDirs.some(excluded => lowerDirName === excluded || lowerDirName.startsWith(excluded + '/'));
+	}
+
+	// File operation event handlers
+	async onFileCreated(filePath: string): Promise<void> {
+		if (!this._credentials) return;
+		
+		try {
+			const parentPath = this.getParentPath(filePath);
+			const fileName = this.getFileName(filePath);
+			
+			// Try to get file info
+			const items = await this.getDirectoryListing(parentPath);
+			const item = items.find(i => i.name === fileName);
+			
+			if (item) {
+				const indexedFile: IndexedFile = {
+					path: filePath,
+					name: item.name,
+					isDirectory: item.isDirectory,
+					lastModified: Date.now()
+				};
+				
+				this._fileIndex.set(filePath, indexedFile);
+				
+				// Update directory index
+				const parentChildren = this._directoryIndex.get(parentPath) || new Set();
+				parentChildren.add(filePath);
+				this._directoryIndex.set(parentPath, parentChildren);
+				
+				this._debugLog('File added to index', { filePath, isDirectory: item.isDirectory });
+			}
+		} catch (error: any) {
+			this._debugLog('Error adding file to index', { filePath, error: error.message });
+		}
+	}
+
+	async onFileDeleted(filePath: string): Promise<void> {
+		const deletedFile = this._fileIndex.get(filePath);
+		if (!deletedFile) return;
+		
+		// Remove from file index
+		this._fileIndex.delete(filePath);
+		
+		// Update directory index
+		const parentPath = this.getParentPath(filePath);
+		const parentChildren = this._directoryIndex.get(parentPath);
+		if (parentChildren) {
+			parentChildren.delete(filePath);
+		}
+		
+		// If it was a directory, remove all children
+		if (deletedFile.isDirectory) {
+			this.removeDirectoryFromIndex(filePath);
+		}
+		
+		this._debugLog('File removed from index', { filePath });
+	}
+
+	async onFileRenamed(oldPath: string, newPath: string): Promise<void> {
+		const oldFile = this._fileIndex.get(oldPath);
+		if (!oldFile) return;
+		
+		// Remove old entry
+		await this.onFileDeleted(oldPath);
+		
+		// Add new entry
+		await this.onFileCreated(newPath);
+		
+		this._debugLog('File renamed in index', { oldPath, newPath });
+	}
+
+	private removeDirectoryFromIndex(dirPath: string): void {
+		// Remove all files that start with this directory path
+		const toRemove: string[] = [];
+		for (const [path] of this._fileIndex) {
+			if (path.startsWith(dirPath + '/')) {
+				toRemove.push(path);
+			}
+		}
+		
+		for (const path of toRemove) {
+			this._fileIndex.delete(path);
+		}
+		
+		// Remove directory from directory index
+		this._directoryIndex.delete(dirPath);
+		
+		this._debugLog('Directory removed from index', { dirPath, removedFiles: toRemove.length });
+	}
+
+	// Search methods using the index
+	searchFiles(pattern: string): string[] {
+		const results: string[] = [];
+		const regex = this.createGlobRegex(pattern);
+		
+		for (const [path, file] of this._fileIndex) {
+			if (!file.isDirectory && regex.test(file.name)) {
+				results.push(path);
+			}
+		}
+		
+		this._debugLog('File search completed', { pattern, resultCount: results.length });
+		return results;
+	}
+
+	searchDirectories(pattern: string): string[] {
+		const results: string[] = [];
+		const regex = this.createGlobRegex(pattern);
+		
+		for (const [path, file] of this._fileIndex) {
+			if (file.isDirectory && regex.test(file.name)) {
+				results.push(path);
+			}
+		}
+		
+		return results;
+	}
+
+	getAllFiles(): string[] {
+		const files: string[] = [];
+		for (const [path, file] of this._fileIndex) {
+			if (!file.isDirectory) {
+				files.push(path);
+			}
+		}
+		return files;
+	}
+
+	getDirectoryContents(dirPath: string): string[] {
+		const children = this._directoryIndex.get(dirPath);
+		return children ? Array.from(children) : [];
+	}
+
+	isFileIndexed(filePath: string): boolean {
+		return this._fileIndex.has(filePath);
+	}
+
+	getIndexStats(): { files: number; directories: number; totalEntries: number } {
+		let files = 0;
+		let directories = 0;
+		
+		for (const file of this._fileIndex.values()) {
+			if (file.isDirectory) {
+				directories++;
+			} else {
+				files++;
+			}
+		}
+		
+		return {
+			files,
+			directories,
+			totalEntries: this._fileIndex.size
+		};
+	}
+
+	private createGlobRegex(pattern: string): RegExp {
+		if (!pattern) {
+			return /.*/; // Match everything if no pattern
+		}
+		
+		// Convert glob pattern to regex
+		const regexPattern = pattern
+			.replace(/\*/g, '.*')
+			.replace(/\?/g, '.')
+			.replace(/\[([^\]]*)\]/g, '[$1]'); // Keep character classes as-is
+		
+		return new RegExp(`^${regexPattern}$`, 'i');
+	}
+
+	private getParentPath(filePath: string): string {
+		const lastSlash = filePath.lastIndexOf('/');
+		return lastSlash > 0 ? filePath.substring(0, lastSlash) : '';
+	}
+
+	private getFileName(filePath: string): string {
+		const lastSlash = filePath.lastIndexOf('/');
+		return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath;
+	}
+
+	private async getDirectoryListing(dirPath: string): Promise<WebDAVFileItem[]> {
+		if (!this._credentials) {
+			throw new Error('No credentials available');
+		}
+
+		try {
+			let cleanDirPath = dirPath.startsWith('/') ? dirPath.substring(1) : dirPath;
+			
+			if (cleanDirPath === '' || cleanDirPath === '/') {
+				cleanDirPath = '';
+			}
+			
+			const dirURL = cleanDirPath 
+				? `${this._credentials.url}/apps/remote/${this._credentials.project}/${cleanDirPath}`
+				: `${this._credentials.url}/apps/remote/${this._credentials.project}/`;
+			
+			const response = await fetch(dirURL, {
+				method: 'GET',
+				headers: {
+					'Authorization': `Basic ${btoa(`${this._credentials.username}:${this._credentials.password}`)}`,
+					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+					'User-Agent': 'VSCode-WebDAV-Extension'
+				},
+				mode: 'cors',
+				credentials: 'include'
+			});
+			
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}`);
+			}
+			
+			const html = await response.text();
+			return this.parseDirectoryHTML(html);
+		} catch (error: any) {
+			this._debugLog('Error in getDirectoryListing', { error: error.message });
+			throw error;
+		}
+	}
+
+	private parseDirectoryHTML(html: string): WebDAVFileItem[] {
+		const items: WebDAVFileItem[] = [];
+		
+		try {
+			const tableRowRegex = /<tr[^>]*>(.*?)<\/tr>/gis;
+			const rows = html.match(tableRowRegex) || [];
+			
+			for (const row of rows) {
+				const nameMatch = row.match(/<td[^>]*class[^>]*nameColumn[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/is);
+				const typeMatch = row.match(/<td[^>]*class[^>]*typeColumn[^>]*>(.*?)<\/td>/is);
+				
+				if (nameMatch && typeMatch) {
+					const href = nameMatch[1]?.trim() || '';
+					const name = this.stripHtmlTags(nameMatch[2]?.trim() || '');
+					const type = this.stripHtmlTags(typeMatch[1]?.trim() || '');
+					
+					if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
+						items.push({
+							name,
+							type,
+							size: '',
+							modified: '',
+							path: href,
+							isDirectory: type === 'Collection' || type.toLowerCase().includes('directory')
+						});
+					}
+				}
+			}
+			
+			return items;
+		} catch (error: any) {
+			return [];
+		}
+	}
+
+	private stripHtmlTags(html: string): string {
+		return html.replace(/<[^>]*>/g, '').trim();
+	}
+}

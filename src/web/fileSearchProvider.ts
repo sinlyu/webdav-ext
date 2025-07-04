@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { WebDAVCredentials, WebDAVFileItem } from './types';
+import { WebDAVFileIndex } from './fileIndex';
 
 export class WebDAVFileSearchProvider {
 	private _credentials: WebDAVCredentials | null = null;
+	private _fileIndex: WebDAVFileIndex | null = null;
 
 	constructor(credentials: WebDAVCredentials | null = null) {
 		this._credentials = credentials;
@@ -10,6 +12,10 @@ export class WebDAVFileSearchProvider {
 
 	setCredentials(credentials: WebDAVCredentials | null) {
 		this._credentials = credentials;
+	}
+
+	setFileIndex(fileIndex: WebDAVFileIndex | null) {
+		this._fileIndex = fileIndex;
 	}
 
 	async provideFileSearchResults(
@@ -21,13 +27,24 @@ export class WebDAVFileSearchProvider {
 			return [];
 		}
 
-		this.debugLog('File search started (new API)', { pattern: query.pattern || query });
+		const searchPattern = typeof query === 'string' ? query : query.pattern || '';
+		this.debugLog('File search started (new API)', { pattern: searchPattern, useIndex: !!this._fileIndex });
 
 		try {
-			const results: vscode.Uri[] = [];
-			const searchPattern = typeof query === 'string' ? query : query.pattern || '';
-			await this.searchDirectory('', searchPattern, results, token);
-			this.debugLog('File search completed', { resultCount: results.length });
+			let results: vscode.Uri[] = [];
+
+			// Use index if available, otherwise fall back to directory traversal
+			if (this._fileIndex) {
+				await this._fileIndex.ensureIndexed();
+				const indexedResults = this._fileIndex.searchFiles(searchPattern);
+				results = indexedResults.map(path => vscode.Uri.parse(`webdav:/${path}`));
+				this.debugLog('File search completed using index', { resultCount: results.length });
+			} else {
+				// Fallback to directory traversal
+				await this.searchDirectory('', searchPattern, results, token);
+				this.debugLog('File search completed using directory traversal', { resultCount: results.length });
+			}
+
 			return results;
 		} catch (error: any) {
 			this.debugLog('File search error', { error: error.message });
