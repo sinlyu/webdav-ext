@@ -136,9 +136,41 @@ export class WebDAVFileIndex {
 		return !excludedDirs.some(excluded => lowerDirName === excluded || lowerDirName.startsWith(excluded + '/'));
 	}
 
+	// Method to add virtual files directly to the index
+	addVirtualFileToIndex(filePath: string, isDirectory: boolean, lastModified: number = Date.now()): void {
+		const fileName = this.getFileName(filePath);
+		const parentPath = this.getParentPath(filePath);
+		
+		const indexedFile: IndexedFile = {
+			path: filePath,
+			name: fileName,
+			isDirectory: isDirectory,
+			lastModified: lastModified
+		};
+		
+		this._fileIndex.set(filePath, indexedFile);
+		
+		// Update directory index
+		const parentChildren = this._directoryIndex.get(parentPath) || new Set();
+		parentChildren.add(filePath);
+		this._directoryIndex.set(parentPath, parentChildren);
+		
+		this._debugLog('Virtual file added to index', { filePath, isDirectory, fileName, parentPath });
+	}
+
+	// Debug method to get all indexed files
+	getAllIndexedFiles(): IndexedFile[] {
+		return Array.from(this._fileIndex.values());
+	}
+
+	// Debug method to get index size
+	getIndexSize(): number {
+		return this._fileIndex.size;
+	}
+
 	// File operation event handlers
 	async onFileCreated(filePath: string): Promise<void> {
-		if (!this._credentials) return;
+		if (!this._credentials) { return; }
 		
 		try {
 			const parentPath = this.getParentPath(filePath);
@@ -172,7 +204,7 @@ export class WebDAVFileIndex {
 
 	async onFileDeleted(filePath: string): Promise<void> {
 		const deletedFile = this._fileIndex.get(filePath);
-		if (!deletedFile) return;
+		if (!deletedFile) { return; }
 		
 		// Remove from file index
 		this._fileIndex.delete(filePath);
@@ -194,7 +226,7 @@ export class WebDAVFileIndex {
 
 	async onFileRenamed(oldPath: string, newPath: string): Promise<void> {
 		const oldFile = this._fileIndex.get(oldPath);
-		if (!oldFile) return;
+		if (!oldFile) { return; }
 		
 		// Remove old entry
 		await this.onFileDeleted(oldPath);
@@ -319,6 +351,8 @@ export class WebDAVFileIndex {
 			throw new Error('No credentials available');
 		}
 
+		let realItems: WebDAVFileItem[] = [];
+		
 		try {
 			let cleanDirPath = dirPath.startsWith('/') ? dirPath.substring(1) : dirPath;
 			
@@ -346,11 +380,15 @@ export class WebDAVFileIndex {
 			}
 			
 			const html = await response.text();
-			return this.parseDirectoryHTML(html);
+			realItems = this.parseDirectoryHTML(html);
 		} catch (error: any) {
 			this._debugLog('Error in getDirectoryListing', { error: error.message });
-			throw error;
+			// Continue with empty real items array, but still check for virtual files
 		}
+		
+		// For now, the file index doesn't have direct access to virtual files
+		// This method is only used during indexing, and virtual files are added separately
+		return realItems;
 	}
 
 	private parseDirectoryHTML(html: string): WebDAVFileItem[] {

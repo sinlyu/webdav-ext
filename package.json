@@ -15,6 +15,9 @@
     "fileSearchProvider",
     "textSearchProvider"
   ],
+  "extensionDependencies": [
+    "devsense.phptools-vscode"
+  ],
   "categories": [
     "Other",
     "SCM Providers"
@@ -35,6 +38,47 @@
   "activationEvents": [],
   "browser": "./dist/web/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "php",
+        "extensions": [
+          ".php"
+        ],
+        "aliases": [
+          "PHP",
+          "php"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "WebDAV Extension",
+      "properties": {
+        "webdav.includeStubs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include plugin API stubs for autocompletion"
+        },
+        "php.suggest.basic": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable basic PHP IntelliSense"
+        },
+        "php.stubs": {
+          "type": "array",
+          "default": [],
+          "description": "List of PHP stub files to include for autocompletion",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "composer.json",
+        "url": "https://getcomposer.org/schema.json"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -63,6 +107,22 @@
         "command": "automate-webdav.refreshWorkspace",
         "title": "Refresh WebDAV Workspace",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "automate-webdav.addStubFile",
+        "title": "Add PHP Plugin API Stub File to Workspace"
+      },
+      {
+        "command": "automate-webdav.setupPhpStubs",
+        "title": "Setup PHP Stubs Configuration"
+      },
+      {
+        "command": "automate-webdav.testVirtualFile",
+        "title": "Test Virtual File Creation"
+      },
+      {
+        "command": "automate-webdav.debugFileSystem",
+        "title": "Debug File System State"
       }
     ]
   },
@@ -78,21 +138,22 @@
     "run-in-browser": "vscode-test-web --browserType=chromium --browserOption=--disable-web-security --browserOption=--disable-features=VizDisplayCompositor --extensionDevelopmentPath=. ."
   },
   "devDependencies": {
-    "@types/vscode": "^1.101.0",
-    "@types/mocha": "^10.0.10",
     "@types/assert": "^1.5.11",
-    "@vscode/vsce": "^3.2.1",
-    "eslint": "^9.25.1",
+    "@types/mocha": "^10.0.10",
+    "@types/vscode": "^1.101.0",
+    "@types/webpack-env": "^1.18.8",
     "@typescript-eslint/eslint-plugin": "^8.31.1",
     "@typescript-eslint/parser": "^8.31.1",
-    "mocha": "^11.1.0",
-    "typescript": "^5.8.3",
     "@vscode/test-web": "^0.0.69",
-    "ts-loader": "^9.5.2",
-    "webpack": "^5.99.7",
-    "webpack-cli": "^6.0.1",
-    "@types/webpack-env": "^1.18.8",
+    "@vscode/vsce": "^3.2.1",
     "assert": "^2.1.0",
-    "process": "^0.11.10"
+    "copy-webpack-plugin": "^13.0.0",
+    "eslint": "^9.25.1",
+    "mocha": "^11.1.0",
+    "process": "^0.11.10",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.8.3",
+    "webpack": "^5.99.7",
+    "webpack-cli": "^6.0.1"
   }
 }

@@ -153,7 +153,9 @@ export class WebDAVFileSearchProvider {
 			return this.parseDirectoryHTML(html);
 		} catch (error: any) {
 			this.debugLog('Error in getDirectoryListing', { error: error.message });
-			throw error;
+			// For the file search provider, we don't have direct access to virtual files
+			// The search will rely on the file index which includes virtual files
+			return [];
 		}
 	}
 
