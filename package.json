@@ -26,23 +26,12 @@
         {
           "id": "webdavConnection",
           "name": "Connection",
+          "type": "webview",
           "when": "true"
         }
       ]
     },
     "commands": [
-      {
-        "command": "automate-webdav.connect",
-        "title": "Connect to WebDAV"
-      },
-      {
-        "command": "automate-webdav.disconnect",
-        "title": "Disconnect from WebDAV"
-      },
-      {
-        "command": "automate-webdav.openFiles",
-        "title": "Show WebDAV Files"
-      },
       {
         "command": "automate-webdav.showDebug",
         "title": "Show WebDAV Debug Output"
@@ -56,6 +45,7 @@
     "compile-web": "webpack",
     "watch-web": "webpack --watch",
     "package-web": "webpack --mode production --devtool hidden-source-map",
+    "package-vscode-dev": "npm run package-web && vsce package --target web",
     "lint": "eslint src",
     "run-in-browser": "vscode-test-web --browserType=chromium --browserOption=--disable-web-security --browserOption=--disable-features=VizDisplayCompositor --extensionDevelopmentPath=. ."
   },
@@ -63,6 +53,7 @@
     "@types/vscode": "^1.101.0",
     "@types/mocha": "^10.0.10",
     "@types/assert": "^1.5.11",
+    "@vscode/vsce": "^3.2.1",
     "eslint": "^9.25.1",
     "@typescript-eslint/eslint-plugin": "^8.31.1",
     "@typescript-eslint/parser": "^8.31.1",

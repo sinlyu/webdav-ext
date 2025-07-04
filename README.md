@@ -1,51 +1,35 @@
-# automate-webdav README
+# automate-webdav
 
-This is the README for your extension "automate-webdav". After writing up a brief description, we recommend including the following sections.
+Navigate through edoc automate apps via VS Code.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+This extension provides WebDAV integration for VS Code, allowing you to:
 
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+- Connect to WebDAV servers through a dedicated activity bar panel
+- Navigate and browse WebDAV resources
+- View debug output for WebDAV operations
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- VS Code 1.101.0 or higher
+- Access to a WebDAV server
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+This extension contributes the following commands:
 
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+* `automate-webdav.showDebug`: Show WebDAV Debug Output
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+This is an early version of the extension. Please report any issues you encounter.
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+Initial release of automate-webdav extension with basic WebDAV connectivity features.
 
 ---
 
