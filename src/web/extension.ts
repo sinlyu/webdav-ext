@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { WebDAVFileSearchProvider } from './providers/fileSearchProvider';
 import { WebDAVTextSearchProvider } from './providers/textSearchProvider';
+import { PHPDefinitionProvider } from './providers/phpDefinitionProvider';
+import { PHPDefinitionProviderAST } from './providers/phpDefinitionProviderAST';
+import { IPHPDefinitionProvider } from './providers/phpDefinitionProviderInterface';
 import { WebDAVFileIndex } from './core/fileIndex';
 import { WebDAVViewProvider } from './ui/webdavViewProvider';
 import { PlaceholderFileSystemProvider } from './providers/fileSystemProvider';
@@ -14,9 +17,64 @@ let globalPlaceholderProvider: PlaceholderFileSystemProvider;
 let globalContext: vscode.ExtensionContext;
 let globalFileSearchProvider: WebDAVFileSearchProvider;
 let globalTextSearchProvider: WebDAVTextSearchProvider;
+let globalPhpDefinitionProvider: IPHPDefinitionProvider;
 let globalFileIndex: WebDAVFileIndex;
 let globalStubFileCreator: (() => Promise<void>) | null = null;
 let debugLog: (message: string, data?: any) => void;
+
+// Function to update PHP Tools workspace.includePath with all PHP directories
+async function updatePhpWorkspaceIncludePath() {
+	try {
+		if (!globalFileIndex) {
+			debugLog('No file index available for PHP includePath update');
+			return;
+		}
+		
+		const allPhpFiles = globalFileIndex.getAllFiles().filter(file => 
+			file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
+		);
+		
+		// Create unique directories containing PHP files
+		const phpDirectories = new Set<string>();
+		allPhpFiles.forEach(file => {
+			const dir = file.substring(0, file.lastIndexOf('/'));
+			if (dir && dir !== '.' && dir !== '') {
+				phpDirectories.add(dir.startsWith('/') ? dir.substring(1) : dir);
+			}
+		});
+		
+		// Add stubs directory
+		phpDirectories.add('.stubs');
+		
+		// Get current workspace.includePath - handle both array and string formats
+		const phpConfig = vscode.workspace.getConfiguration('php');
+		let currentIncludePaths: string[] = [];
+		const currentConfig = phpConfig.get('workspace.includePath', [] as any);
+		if (Array.isArray(currentConfig)) {
+			currentIncludePaths = currentConfig;
+		} else if (typeof currentConfig === 'string') {
+			currentIncludePaths = currentConfig.split(';').filter((p: string) => p.trim());
+		}
+		
+		// Merge with existing paths
+		const newIncludePaths = new Set([...currentIncludePaths]);
+		phpDirectories.forEach(dir => newIncludePaths.add(dir));
+		
+		// Convert to semicolon-separated string as required by PHP Tools
+		const finalIncludePaths = Array.from(newIncludePaths).filter(p => p.trim()).join(';');
+		
+		await phpConfig.update('workspace.includePath', finalIncludePaths, vscode.ConfigurationTarget.Workspace);
+		
+		debugLog('Updated PHP Tools workspace.includePath', { 
+			includePath: finalIncludePaths,
+			phpDirectoryCount: phpDirectories.size,
+			totalPhpFiles: allPhpFiles.length,
+			allDirectories: Array.from(phpDirectories)
+		});
+	} catch (error: any) {
+		debugLog('Failed to update PHP Tools workspace.includePath', { error: error.message });
+	}
+}
 
 export function activate(context: vscode.ExtensionContext) {
 	// Store context globally for persistence
@@ -52,16 +110,32 @@ export function activate(context: vscode.ExtensionContext) {
 	// Initialize and register search providers
 	globalFileSearchProvider = new WebDAVFileSearchProvider();
 	globalTextSearchProvider = new WebDAVTextSearchProvider();
+	
+	// Choose PHP definition provider (AST-based is more accurate)
+	const useASTParser = vscode.workspace.getConfiguration('webdav').get('useASTParser', false);
+	if (useASTParser) {
+		globalPhpDefinitionProvider = new PHPDefinitionProviderAST();
+		debugLog('Using AST-based PHP definition provider');
+	} else {
+		globalPhpDefinitionProvider = new PHPDefinitionProvider();
+		debugLog('Using regex-based PHP definition provider');
+	}
+	
 	globalFileIndex = new WebDAVFileIndex();
 	
 	// Set debug loggers for search providers and index
 	globalFileSearchProvider.setDebugLogger(debugLog);
 	globalTextSearchProvider.setDebugLogger(debugLog);
+	globalPhpDefinitionProvider.setDebugLogger(debugLog);
 	globalFileIndex.setDebugLogger(debugLog);
+	
+	// Set callback to update PHP workspace.includePath when index is updated
+	globalFileIndex.setOnIndexUpdatedCallback(updatePhpWorkspaceIncludePath);
 	
 	// Set file index for search providers
 	globalFileSearchProvider.setFileIndex(globalFileIndex);
 	globalTextSearchProvider.setFileIndex(globalFileIndex);
+	globalPhpDefinitionProvider.setFileIndex(globalFileIndex);
 	
 	try {
 		// Try to register search providers using experimental API
@@ -80,6 +154,19 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	} catch (error: any) {
 		debugLog('Failed to register search providers', { error: error.message });
+	}
+
+	// Register PHP definition provider
+	try {
+		context.subscriptions.push(
+			vscode.languages.registerDefinitionProvider(
+				{ scheme: 'webdav', language: 'php' },
+				globalPhpDefinitionProvider
+			)
+		);
+		debugLog('PHP definition provider registered');
+	} catch (error: any) {
+		debugLog('Failed to register PHP definition provider', { error: error.message });
 	}
 
 	// Register stub file for PHP autocompletion
@@ -192,6 +279,53 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 					}
 					
+					// Configure PHP Tools (DEVSENSE) workspace.includePath
+					try {
+						const phpToolsConfig = vscode.workspace.getConfiguration('php');
+						
+						// Get all PHP files from the file index to add to workspace.includePath
+						if (globalFileIndex) {
+							setTimeout(async () => {
+								const allPhpFiles = globalFileIndex.getAllFiles().filter(file => 
+									file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
+								);
+								
+								// Get current workspace.includePath
+								const currentIncludePaths = phpToolsConfig.get('workspace.includePath', []) as string[];
+								
+								// Add all PHP files and the stubs directory to includePath
+								const newIncludePaths = new Set([...currentIncludePaths]);
+								
+								// Add stubs directory
+								newIncludePaths.add('.stubs');
+								
+								// Add each PHP file path (use directory paths, not individual files for performance)
+								const phpDirectories = new Set<string>();
+								allPhpFiles.forEach(file => {
+									const dir = file.substring(0, file.lastIndexOf('/'));
+									if (dir && dir !== '.') {
+										phpDirectories.add(dir);
+									}
+								});
+								
+								// Add unique directories containing PHP files
+								phpDirectories.forEach(dir => newIncludePaths.add(dir));
+								
+								const finalIncludePaths = Array.from(newIncludePaths).join(';');
+								
+								await phpToolsConfig.update('workspace.includePath', finalIncludePaths, vscode.ConfigurationTarget.Workspace);
+								
+								debugLog('Updated PHP Tools workspace.includePath', { 
+									includePath: finalIncludePaths,
+									phpDirectoryCount: phpDirectories.size,
+									totalPhpFiles: allPhpFiles.length
+								});
+							}, 2000); // Wait for file index to be populated
+						}
+					} catch (error: any) {
+						debugLog('Failed to configure PHP Tools workspace.includePath', { error: error.message });
+					}
+					
 					debugLog('Virtual PHP stub file registered for autocompletion', { 
 						relativePath: relativeStubPath
 					});
@@ -216,6 +350,7 @@ export function activate(context: vscode.ExtensionContext) {
 		globalPlaceholderProvider,
 		globalFileSearchProvider,
 		globalTextSearchProvider,
+		globalPhpDefinitionProvider,
 		globalFileIndex,
 		globalContext,
 		globalStubFileCreator,
@@ -311,10 +446,10 @@ export function activate(context: vscode.ExtensionContext) {
 	const refreshWorkspaceCommand = vscode.commands.registerCommand('automate-webdav.refreshWorkspace', async () => {
 		debugLog('Refresh workspace command triggered');
 		
-		// Index all files to make them searchable
+		// Refresh the file index
 		const realProvider = globalPlaceholderProvider?.getRealProvider();
-		if (realProvider) {
-			await realProvider.indexAllFiles();
+		if (realProvider && realProvider.getFileIndex()) {
+			await realProvider.getFileIndex()?.quickIndex();
 		}
 		
 		await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
@@ -390,15 +525,31 @@ export function activate(context: vscode.ExtensionContext) {
 			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
 			debugLog('Virtual stub file created');
 			
-			// Prepare settings content
+			// Get all PHP files from the file index to include in settings
+			const allPhpFiles = globalFileIndex ? globalFileIndex.getAllFiles().filter(file => 
+				file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
+			) : [];
+			
+			// Create unique directories containing PHP files
+			const phpDirectories = new Set<string>();
+			allPhpFiles.forEach(file => {
+				const dir = file.substring(0, file.lastIndexOf('/'));
+				if (dir && dir !== '.' && dir !== '') {
+					phpDirectories.add(dir.startsWith('/') ? dir.substring(1) : dir);
+				}
+			});
+			
+			// Add stubs directory
+			phpDirectories.add('.stubs');
+			
+			// Prepare settings content with all PHP directories
 			const settingsContent = {
 				"php.stubs": [
 					"*",
 					".stubs/plugin-api.stubs.php"
 				],
-				"intelephense.environment.includePaths": [
-					".stubs"
-				]
+				"php.workspace.includePath": Array.from(phpDirectories).join(';'),
+				"intelephense.environment.includePaths": Array.from(phpDirectories)
 			};
 			debugLog('Prepared settings content', { settingsContent });
 			
@@ -450,6 +601,58 @@ export function activate(context: vscode.ExtensionContext) {
 			
 			await phpConfig.update('stubs', newStubs, vscode.ConfigurationTarget.Workspace);
 			debugLog('Updated VS Code php.stubs configuration', { newStubs });
+			
+			// Configure PHP Tools workspace.includePath for all PHP files
+			try {
+				// Get all PHP files from the file index
+				if (globalFileIndex) {
+					setTimeout(async () => {
+						const allPhpFiles = globalFileIndex.getAllFiles().filter(file => 
+							file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
+						);
+						
+						// Get current workspace.includePath - handle both array and string formats
+						let currentIncludePaths: string[] = [];
+						const currentConfig = phpConfig.get('workspace.includePath', [] as any);
+						if (Array.isArray(currentConfig)) {
+							currentIncludePaths = currentConfig;
+						} else if (typeof currentConfig === 'string') {
+							currentIncludePaths = currentConfig.split(';').filter((p: string) => p.trim());
+						}
+						
+						// Add all PHP files and the stubs directory to includePath
+						const newIncludePaths = new Set([...currentIncludePaths]);
+						
+						// Add stubs directory
+						newIncludePaths.add('.stubs');
+						
+						// Add each PHP file path (use directory paths, not individual files for performance)
+						const phpDirectories = new Set<string>();
+						allPhpFiles.forEach(file => {
+							const dir = file.substring(0, file.lastIndexOf('/'));
+							if (dir && dir !== '.' && dir !== '') {
+								phpDirectories.add(dir.startsWith('/') ? dir.substring(1) : dir);
+							}
+						});
+						
+						// Add unique directories containing PHP files
+						phpDirectories.forEach(dir => newIncludePaths.add(dir));
+						
+						// Convert to semicolon-separated string as required by PHP Tools
+						const finalIncludePaths = Array.from(newIncludePaths).filter(p => p.trim()).join(';');
+						
+						await phpConfig.update('workspace.includePath', finalIncludePaths, vscode.ConfigurationTarget.Workspace);
+						
+						debugLog('Updated PHP Tools workspace.includePath in setupPhpStubsCommand', { 
+							includePath: finalIncludePaths,
+							phpDirectoryCount: phpDirectories.size,
+							totalPhpFiles: allPhpFiles.length
+						});
+					}, 1000); // Wait for file index to be populated
+				}
+			} catch (error: any) {
+				debugLog('Failed to configure PHP Tools workspace.includePath in setupPhpStubsCommand', { error: error.message });
+			}
 			
 			// Refresh the file explorer to show the new virtual files
 			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');

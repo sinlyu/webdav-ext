@@ -170,7 +170,9 @@ export class DefensiveErrorHandler {
   }
 
   private static sanitizeStack(stack?: string): string {
-    if (!stack) return 'No stack trace available';
+    if (!stack) {
+      return 'No stack trace available';
+    }
     
     const lines = stack.split('\n');
     

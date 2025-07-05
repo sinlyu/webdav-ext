@@ -1,10 +1,36 @@
 # Change Log
 
-All notable changes to the "automate-webdav" extension will be documented in this file.
-
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+All notable changes to the "edoc Automate WebDAV" extension will be documented in this file.
 
 ## [Unreleased]
+
+### 🚀 PHP Development Features
+- **📝 PHP IntelliSense & Type Definitions**: Enhanced development experience
+  - Added comprehensive PHP definition provider with AST parsing support
+  - Implemented "Go to Definition" functionality for PHP functions and classes
+  - Automatic PHP plugin API stub file generation for autocompletion
+  - Integration with PHP Tools extension for enhanced IntelliSense
+  - Support for both simple text-based and AST-based definition lookup
+  - Automatic workspace.includePath configuration for PHP development
+
+### 🎨 UI & Branding Improvements
+- **🏷️ edoc Automate Branding**: Complete rebrand for edoc Automate integration
+  - Updated extension display name to "edoc Automate WebDAV"
+  - Enhanced activity bar with edoc Automate branding and server environment icon
+  - Updated all user-facing messages to reference edoc Automate
+  - Improved command titles and descriptions for clarity
+- **✨ Modern UI Enhancements**: Professional interface design
+  - Enhanced connection form with modern styling and better visual hierarchy
+  - Added custom brand icon with gradient styling
+  - Improved button interactions with hover effects and smooth transitions
+  - Enhanced input focus states with subtle animations
+  - Better error styling with colored accent borders and improved readability
+- **🔧 User Experience Improvements**: Better usability
+  - Fixed emoji display compatibility issues in VS Code webview
+  - Replaced problematic emoji with custom CSS-based info icons
+  - Enhanced status cards with visual accent borders
+  - Improved form spacing and typography for better readability
+  - Added loading animations and better visual feedback
 
 ## [0.1.0] - 2024-07-04
 
