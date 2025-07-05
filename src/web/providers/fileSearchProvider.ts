@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { WebDAVCredentials, WebDAVFileItem } from './types';
-import { WebDAVFileIndex } from './fileIndex';
+import { WebDAVCredentials, WebDAVFileItem } from '../types';
+import { WebDAVFileIndex } from '../core/fileIndex';
+import { parseDirectoryHTML } from '../utils/htmlUtils';
 
 export class WebDAVFileSearchProvider {
 	private _credentials: WebDAVCredentials | null = null;
@@ -37,7 +38,11 @@ export class WebDAVFileSearchProvider {
 			if (this._fileIndex) {
 				await this._fileIndex.ensureIndexed();
 				const indexedResults = this._fileIndex.searchFiles(searchPattern);
-				results = indexedResults.map(path => vscode.Uri.parse(`webdav:/${path}`));
+				results = indexedResults.map(path => {
+					// Ensure path starts with /
+					const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+					return vscode.Uri.parse(`webdav:${normalizedPath}`);
+				});
 				this.debugLog('File search completed using index', { resultCount: results.length });
 			} else {
 				// Fallback to directory traversal
@@ -78,7 +83,9 @@ export class WebDAVFileSearchProvider {
 					}
 				} else {
 					if (this.matchesPattern(item.name, pattern)) {
-						results.push(vscode.Uri.parse(`webdav:/${itemPath}`));
+						// Ensure path starts with /
+						const normalizedPath = itemPath.startsWith('/') ? itemPath : `/${itemPath}`;
+						results.push(vscode.Uri.parse(`webdav:${normalizedPath}`));
 					}
 				}
 			}
@@ -150,7 +157,7 @@ export class WebDAVFileSearchProvider {
 			}
 			
 			const html = await response.text();
-			return this.parseDirectoryHTML(html);
+			return parseDirectoryHTML(html);
 		} catch (error: any) {
 			this.debugLog('Error in getDirectoryListing', { error: error.message });
 			// For the file search provider, we don't have direct access to virtual files
@@ -159,44 +166,7 @@ export class WebDAVFileSearchProvider {
 		}
 	}
 
-	private parseDirectoryHTML(html: string): WebDAVFileItem[] {
-		const items: WebDAVFileItem[] = [];
-		
-		try {
-			const tableRowRegex = /<tr[^>]*>(.*?)<\/tr>/gis;
-			const rows = html.match(tableRowRegex) || [];
-			
-			for (const row of rows) {
-				const nameMatch = row.match(/<td[^>]*class[^>]*nameColumn[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/is);
-				const typeMatch = row.match(/<td[^>]*class[^>]*typeColumn[^>]*>(.*?)<\/td>/is);
-				
-				if (nameMatch && typeMatch) {
-					const href = nameMatch[1]?.trim() || '';
-					const name = this.stripHtmlTags(nameMatch[2]?.trim() || '');
-					const type = this.stripHtmlTags(typeMatch[1]?.trim() || '');
-					
-					if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
-						items.push({
-							name,
-							type,
-							size: '',
-							modified: '',
-							path: href,
-							isDirectory: type === 'Collection' || type.toLowerCase().includes('directory')
-						});
-					}
-				}
-			}
-			
-			return items;
-		} catch (error: any) {
-			return [];
-		}
-	}
 
-	private stripHtmlTags(html: string): string {
-		return html.replace(/<[^>]*>/g, '').trim();
-	}
 
 	// Debug logging placeholder - will be provided by extension
 	private debugLog(_message: string, _data?: any) {

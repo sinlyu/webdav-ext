@@ -2,10 +2,12 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { WebDAVCredentials } from './types';
-import { WebDAVFileSearchProvider } from './fileSearchProvider';
-import { WebDAVTextSearchProvider } from './textSearchProvider';
-import { WebDAVFileIndex } from './fileIndex';
-import { WebDAVFileSystemProvider } from './webdavFileSystemProvider';
+import { WebDAVFileSearchProvider } from './providers/fileSearchProvider';
+import { WebDAVTextSearchProvider } from './providers/textSearchProvider';
+import { WebDAVFileIndex } from './core/fileIndex';
+import { WebDAVFileSystemProvider } from './providers/webdavFileSystemProvider';
+import { WebDAVViewProvider } from './ui/webdavViewProvider';
+
 
 
 class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
@@ -16,6 +18,7 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 
 	setRealProvider(provider: WebDAVFileSystemProvider | null) {
 		this._realProvider = provider;
+		debugLog('PlaceholderProvider: Real provider set', { hasProvider: !!provider });
 	}
 
 	getRealProvider(): WebDAVFileSystemProvider | null {
@@ -30,12 +33,24 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 	}
 
 	async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-		if (this._realProvider) {
-			return this._realProvider.stat(uri);
+		// Handle malformed URIs with extra leading slash
+		let correctedUri = uri;
+		if (uri.toString().startsWith('/webdav:')) {
+			// Fix malformed URI by removing leading slash
+			const correctedUriString = uri.toString().substring(1);
+			correctedUri = vscode.Uri.parse(correctedUriString);
+			debugLog('Fixed malformed URI with leading slash', {
+				original: uri.toString(),
+				corrected: correctedUri.toString()
+			});
 		}
-		debugLog('PlaceholderProvider: stat() called but not connected', { uri: uri.toString() });
-		vscode.window.showErrorMessage('Not connected to WebDAV server. Please connect first.');
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
+		
+		if (this._realProvider) {
+			return this._realProvider.stat(correctedUri);
+		}
+		debugLog('PlaceholderProvider: stat() called but not connected', { uri: correctedUri.toString() });
+		const errorMsg = `No file system handle registered (${correctedUri.scheme}://)`;
+		throw vscode.FileSystemError.Unavailable(errorMsg);
 	}
 
 	async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
@@ -43,8 +58,8 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 			return this._realProvider.readDirectory(uri);
 		}
 		debugLog('PlaceholderProvider: readDirectory() called but not connected', { uri: uri.toString() });
-		vscode.window.showErrorMessage('Not connected to WebDAV server. Please connect first.');
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
+		const errorMsg = `No file system handle registered (${uri.scheme}://)`;
+		throw vscode.FileSystemError.Unavailable(errorMsg);
 	}
 
 	async createDirectory(uri: vscode.Uri): Promise<void> {
@@ -55,10 +70,24 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 	}
 
 	async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-		if (this._realProvider) {
-			return this._realProvider.readFile(uri);
+		// Handle malformed URIs with extra leading slash
+		let correctedUri = uri;
+		if (uri.toString().startsWith('/webdav:')) {
+			// Fix malformed URI by removing leading slash
+			const correctedUriString = uri.toString().substring(1);
+			correctedUri = vscode.Uri.parse(correctedUriString);
+			debugLog('Fixed malformed URI with leading slash', {
+				original: uri.toString(),
+				corrected: correctedUri.toString()
+			});
 		}
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
+		
+		if (this._realProvider) {
+			return this._realProvider.readFile(correctedUri);
+		}
+		debugLog('PlaceholderProvider: readFile() called but not connected', { uri: correctedUri.toString() });
+		const errorMsg = `No file system handle registered (${correctedUri.scheme}://)`;
+		throw vscode.FileSystemError.Unavailable(errorMsg);
 	}
 
 	async writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean; }): Promise<void> {
@@ -84,928 +113,6 @@ class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
 }
 
 
-class WebDAVViewProvider implements vscode.WebviewViewProvider {
-	public static readonly viewType = 'webdavConnection';
-	private _view?: vscode.WebviewView;
-	private credentials: WebDAVCredentials | null = null;
-	private connected = false;
-	private fsProvider: WebDAVFileSystemProvider | null = null;
-
-	constructor(private readonly _extensionUri: vscode.Uri) {}
-
-	public resolveWebviewView(
-		webviewView: vscode.WebviewView,
-		_context: vscode.WebviewViewResolveContext,
-		_token: vscode.CancellationToken,
-	) {
-		this._view = webviewView;
-
-		webviewView.webview.options = {
-			enableScripts: true,
-			localResourceRoots: [this._extensionUri]
-		};
-
-		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-
-		// Add visibility change handler to maintain connection state
-		webviewView.onDidChangeVisibility(() => {
-			if (webviewView.visible) {
-				debugLog('Webview became visible, attempting auto-reconnect');
-				this.autoReconnect();
-			}
-		});
-
-		// Attempt auto-reconnect immediately when webview is resolved
-		setTimeout(() => {
-			debugLog('Webview resolved, attempting initial auto-reconnect');
-			this.autoReconnect();
-		}, 100);
-
-		webviewView.webview.onDidReceiveMessage(async data => {
-			debugLog('WebView received message', { type: data.type, data });
-			try {
-				switch (data.type) {
-					case 'test':
-						debugLog('Test message received from webview');
-						vscode.window.showInformationMessage('Webview test successful!');
-						break;
-					case 'connect':
-						debugLog('Processing connect message', { url: data.url, username: data.username, project: data.project });
-						await this.connect(data.url, data.username, data.password, data.project);
-						break;
-					case 'disconnect':
-						debugLog('Processing disconnect message');
-						this.disconnect();
-						break;
-					case 'addToWorkspace':
-						debugLog('Processing addToWorkspace message');
-						this.openFiles();
-						break;
-					default:
-						debugLog('Unknown message type', { type: data.type });
-				}
-			} catch (error: any) {
-				debugLog('Error in message handler', { error: error.message, stack: error.stack });
-				this._view?.webview.postMessage({
-					type: 'connectionError',
-					error: error.message || 'Connection failed'
-				});
-			}
-		});
-
-		this.updateWebview();
-	}
-
-	private _getHtmlForWebview(_webview: vscode.Webview) {
-		const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>WebDAV Connection</title>
-	<style>
-		body {
-			font-family: var(--vscode-font-family);
-			font-size: var(--vscode-font-size);
-			background-color: var(--vscode-sideBar-background);
-			color: var(--vscode-sideBar-foreground);
-			margin: 0;
-			padding: 16px;
-		}
-		.container { max-width: 100%; }
-		.form-group { margin-bottom: 16px; }
-		h3 {
-			color: var(--vscode-editor-foreground);
-			margin-top: 0;
-			margin-bottom: 16px;
-		}
-		label {
-			display: block;
-			margin-bottom: 4px;
-			font-weight: 600;
-			color: var(--vscode-input-foreground);
-		}
-		input {
-			width: 100%;
-			padding: 8px 12px;
-			border: 1px solid var(--vscode-input-border);
-			background-color: var(--vscode-input-background);
-			color: var(--vscode-input-foreground);
-			border-radius: 4px;
-			font-size: 13px;
-			box-sizing: border-box;
-		}
-		input:focus {
-			outline: none;
-			border-color: var(--vscode-focusBorder);
-			box-shadow: 0 0 0 1px var(--vscode-focusBorder);
-		}
-		.btn {
-			background-color: var(--vscode-button-background);
-			color: var(--vscode-button-foreground);
-			border: none;
-			padding: 8px 16px;
-			border-radius: 4px;
-			cursor: pointer;
-			font-size: 13px;
-			font-weight: 500;
-			width: 100%;
-			margin-top: 8px;
-		}
-		.btn:hover { background-color: var(--vscode-button-hoverBackground); }
-		.btn:disabled {
-			background-color: var(--vscode-button-secondaryBackground);
-			color: var(--vscode-button-secondaryForeground);
-			cursor: not-allowed;
-		}
-		.btn-secondary {
-			background-color: var(--vscode-button-secondaryBackground);
-			color: var(--vscode-button-secondaryForeground);
-		}
-		.btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
-		.status-card {
-			background-color: var(--vscode-editorWidget-background);
-			border: 1px solid var(--vscode-editorWidget-border);
-			border-radius: 6px;
-			padding: 16px;
-			margin-bottom: 16px;
-		}
-		.status-title {
-			font-weight: 600;
-			margin-bottom: 8px;
-			color: var(--vscode-editor-foreground);
-		}
-		.status-item {
-			display: flex;
-			justify-content: space-between;
-			margin-bottom: 4px;
-			font-size: 12px;
-		}
-		.status-label { color: var(--vscode-descriptionForeground); }
-		.status-value {
-			color: var(--vscode-editor-foreground);
-			font-weight: 500;
-		}
-		.success-indicator {
-			color: var(--vscode-testing-iconPassed);
-			font-weight: 600;
-		}
-		.hidden { display: none; }
-		.error {
-			color: var(--vscode-errorForeground);
-			font-size: 12px;
-			margin-top: 4px;
-		}
-		.loading {
-			opacity: 0.6;
-			pointer-events: none;
-		}
-	</style>
-</head>
-<body>
-	<div class="container">
-		<div id="connectionForm" class="connection-form">
-			<h3>WebDAV Connection</h3>
-			<form id="webdavForm">
-				<div class="form-group">
-					<label for="url">Server URL</label>
-					<input type="url" id="url" placeholder="https://server.com/apps/remote/project" required>
-					<div id="urlError" class="error hidden"></div>
-				</div>
-				<div class="form-group">
-					<label for="username">Username</label>
-					<input type="text" id="username" placeholder="Enter username" required>
-				</div>
-				<div class="form-group">
-					<label for="password">Password</label>
-					<input type="password" id="password" placeholder="Enter password" required>
-				</div>
-				<div class="form-group">
-					<label for="project">Project Name</label>
-					<input type="text" id="project" placeholder="Auto-detected or manual entry">
-					<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
-						Project will be auto-extracted from URL if available
-					</div>
-				</div>
-				<button type="submit" class="btn" id="connectBtn">Connect to WebDAV</button>
-			</form>
-		</div>
-		<div id="connectionStatus" class="hidden">
-			<div class="status-card">
-				<div class="status-title">
-					<span class="success-indicator">✓</span> Connected to WebDAV
-				</div>
-				<div class="status-item">
-					<span class="status-label">Server:</span>
-					<span class="status-value" id="connectedUrl"></span>
-				</div>
-				<div class="status-item">
-					<span class="status-label">User:</span>
-					<span class="status-value" id="connectedUser"></span>
-				</div>
-				<div class="status-item">
-					<span class="status-label">Project:</span>
-					<span class="status-value" id="connectedProject"></span>
-				</div>
-			</div>
-			<button class="btn" id="addWorkspaceBtn">Add to Workspace</button>
-			<button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
-		</div>
-	</div>
-</body>
-</html>`;
-		
-		// Add the script separately to avoid template literal issues
-		const script = this._getWebviewScript();
-		const fullHtml = html.replace('</body>', script + '</body>');
-		return fullHtml;
-	}
-
-	private _getWebviewScript(): string {
-		return `
-<script>
-(function() {
-	'use strict';
-	
-	const vscode = acquireVsCodeApi();
-	
-	function setupEventHandlers() {
-		const webdavForm = document.getElementById('webdavForm');
-		if (webdavForm) {
-			webdavForm.addEventListener('submit', handleFormSubmit);
-		}
-		
-		const disconnectBtn = document.getElementById('disconnectBtn');
-		if (disconnectBtn) {
-			disconnectBtn.addEventListener('click', handleDisconnect);
-		}
-		
-		const addWorkspaceBtn = document.getElementById('addWorkspaceBtn');
-		if (addWorkspaceBtn) {
-			addWorkspaceBtn.addEventListener('click', handleAddWorkspace);
-		}
-		
-		const urlInput = document.getElementById('url');
-		if (urlInput) {
-			urlInput.addEventListener('input', handleUrlChange);
-		}
-		
-		window.addEventListener('message', handleMessage);
-	}
-	
-	function handleFormSubmit(e) {
-		e.preventDefault();
-		
-		const urlInput = document.getElementById('url');
-		const usernameInput = document.getElementById('username');
-		const passwordInput = document.getElementById('password');
-		const projectInput = document.getElementById('project');
-		
-		if (!urlInput || !usernameInput || !passwordInput || !projectInput) {
-			console.error('Form elements not found');
-			return;
-		}
-		
-		const url = urlInput.value;
-		const username = usernameInput.value;
-		const password = passwordInput.value;
-		let project = projectInput.value;
-		
-		if (!project) {
-			const match = url.match(/\\/apps\\/remote\\/([^\\/\\?#]+)/);
-			project = match ? match[1] : '';
-		}
-		
-		if (!project) {
-			showError('Project name required. Please add it to the URL or enter manually.');
-			return;
-		}
-		
-		hideError();
-		setLoadingState(true);
-		
-		vscode.postMessage({
-			type: 'connect',
-			url: url,
-			username: username,
-			password: password,
-			project: project
-		});
-	}
-	
-	function handleDisconnect() {
-		vscode.postMessage({ type: 'disconnect' });
-	}
-	
-	function handleAddWorkspace() {
-		vscode.postMessage({ type: 'addToWorkspace' });
-	}
-	
-	function handleUrlChange(e) {
-		const url = e.target.value;
-		const projectField = document.getElementById('project');
-		
-		if (url && projectField && !projectField.value) {
-			const match = url.match(/\\/apps\\/remote\\/([^\\/\\?#]+)/);
-			if (match) {
-				projectField.value = match[1];
-			}
-		}
-	}
-	
-	function handleMessage(event) {
-		const message = event.data;
-		console.log('WebView received message:', message);
-		
-		switch (message.type) {
-			case 'connectionStatus':
-				if (message.connected) {
-					showConnectionStatus(message);
-				} else {
-					showConnectionForm();
-				}
-				break;
-			case 'connectionError':
-				console.log('Connection error received:', message.error);
-				setLoadingState(false);
-				showError(message.error || 'Connection failed');
-				break;
-		}
-	}
-	
-	function showConnectionStatus(message) {
-		const connectionForm = document.getElementById('connectionForm');
-		const connectionStatus = document.getElementById('connectionStatus');
-		if (connectionForm) connectionForm.classList.add('hidden');
-		if (connectionStatus) connectionStatus.classList.remove('hidden');
-		
-		const connectedUrl = document.getElementById('connectedUrl');
-		const connectedUser = document.getElementById('connectedUser');
-		const connectedProject = document.getElementById('connectedProject');
-		if (connectedUrl) connectedUrl.textContent = message.url || '';
-		if (connectedUser) connectedUser.textContent = message.username || '';
-		if (connectedProject) connectedProject.textContent = message.project || '';
-	}
-	
-	function showConnectionForm() {
-		const connectionForm = document.getElementById('connectionForm');
-		const connectionStatus = document.getElementById('connectionStatus');
-		if (connectionForm) connectionForm.classList.remove('hidden');
-		if (connectionStatus) connectionStatus.classList.add('hidden');
-		setLoadingState(false);
-	}
-	
-	function setLoadingState(loading) {
-		const connectBtn = document.getElementById('connectBtn');
-		if (connectBtn) {
-			connectBtn.textContent = loading ? 'Connecting...' : 'Connect to WebDAV';
-			connectBtn.disabled = loading;
-		}
-		const connectionForm = document.querySelector('.connection-form');
-		if (connectionForm) {
-			if (loading) {
-				connectionForm.classList.add('loading');
-			} else {
-				connectionForm.classList.remove('loading');
-			}
-		}
-	}
-	
-	function showError(message) {
-		const urlError = document.getElementById('urlError');
-		if (urlError) {
-			urlError.textContent = message;
-			urlError.classList.remove('hidden');
-		}
-	}
-	
-	function hideError() {
-		const urlError = document.getElementById('urlError');
-		if (urlError) {
-			urlError.classList.add('hidden');
-		}
-	}
-	
-	// Initialize when DOM is ready
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', setupEventHandlers);
-	} else {
-		setupEventHandlers();
-	}
-})();
-</script>`;
-	}
-
-	private updateWebview() {
-		if (this._view) {
-			const message = {
-				type: 'connectionStatus',
-				connected: this.connected,
-				url: this.credentials?.url,
-				username: this.credentials?.username,
-				project: this.credentials?.project
-			};
-			debugLog('Sending message to webview', message);
-			this._view.webview.postMessage(message);
-		} else {
-			debugLog('Cannot update webview - view is null');
-		}
-	}
-
-	// Force update webview with current connection state
-	public forceUpdateWebview() {
-		debugLog('Force updating webview with current state', {
-			connected: this.connected,
-			hasCredentials: !!this.credentials,
-			hasProvider: !!this.fsProvider
-		});
-		this.updateWebview();
-	}
-
-	// Auto-reconnect if credentials are available
-	public async autoReconnect() {
-		debugLog('Auto-reconnect attempt started', {
-			currentlyConnected: this.connected,
-			hasCredentials: !!this.credentials,
-			hasProvider: !!this.fsProvider
-		});
-
-		// If already connected, just update the webview
-		if (this.connected && this.fsProvider && this.credentials) {
-			debugLog('Already connected, updating webview');
-			this.forceUpdateWebview();
-			return;
-		}
-
-		// Try to restore from stored credentials
-		try {
-			const storedCredentials = await this.getStoredCredentials();
-			if (storedCredentials) {
-				debugLog('Found stored credentials for auto-reconnect', {
-					url: storedCredentials.url,
-					project: storedCredentials.project,
-					username: storedCredentials.username
-				});
-
-				// Restore connection state
-				this.credentials = storedCredentials;
-				this.connected = true;
-				this.fsProvider = new WebDAVFileSystemProvider(this.credentials);
-				
-				// Set dependencies for filesystem provider
-				this.fsProvider.setDebugLogger(debugLog);
-				this.fsProvider.setFileIndex(globalFileIndex);
-				this.fsProvider.setDebugOutput(debugOutput);
-
-				// Set the real provider in the placeholder
-				if (globalPlaceholderProvider) {
-					globalPlaceholderProvider.setRealProvider(this.fsProvider);
-					debugLog('Real provider set in placeholder during auto-reconnect');
-				}
-
-				// Set credentials for search providers
-				if (globalFileSearchProvider) {
-					globalFileSearchProvider.setCredentials(this.credentials);
-					debugLog('Credentials set for file search provider during auto-reconnect');
-				}
-				if (globalTextSearchProvider) {
-					globalTextSearchProvider.setCredentials(this.credentials);
-					debugLog('Credentials set for text search provider during auto-reconnect');
-				}
-				if (globalFileIndex) {
-					globalFileIndex.setCredentials(this.credentials);
-					// Start indexing after credentials are set
-					globalFileIndex.rebuildIndex().catch(error => {
-						debugLog('Error rebuilding index during auto-reconnect', { error: error.message });
-					});
-					debugLog('Credentials set for file index during auto-reconnect');
-				}
-
-
-
-				// Update webview to show connected state
-				this.updateWebview();
-
-				debugLog('Auto-reconnect successful', {
-					url: storedCredentials.url,
-					project: storedCredentials.project
-				});
-
-				// Show a subtle notification
-				vscode.window.showInformationMessage(
-					`Auto-connected to WebDAV: ${storedCredentials.project}`,
-					'Hide'
-				);
-
-				return this.fsProvider;
-			} else {
-				debugLog('No stored credentials found for auto-reconnect');
-				this.updateWebview();
-			}
-		} catch (error: any) {
-			debugLog('Auto-reconnect failed', { error: error.message, stack: error.stack });
-			this.updateWebview();
-		}
-
-		return null;
-	}
-
-
-	async connect(url: string, username: string, password: string, project?: string) {
-		debugLog('Starting connection process', { url, username, project });
-		
-		try {
-			// Extract project name from URL or use provided
-			let finalProject = project;
-			if (!finalProject) {
-				finalProject = this.extractProjectFromUrl(url) || undefined;
-			}
-			
-			debugLog('Project extraction complete', { finalProject, extractedFrom: url });
-
-			if (!finalProject) {
-				debugLog('No project name found, sending error');
-				this._view?.webview.postMessage({
-					type: 'connectionError',
-					error: 'Project name is required'
-				});
-				return;
-			}
-
-			// Clean URL to base server URL
-			const baseUrl = this.getBaseUrl(url);
-			debugLog('URL processing', { originalUrl: url, baseUrl, project: finalProject });
-
-			// Validate credentials by testing connection
-			debugLog('Validating credentials...');
-			const tempCredentials = { url: baseUrl, username, password, project: finalProject };
-			const isValid = await this.validateCredentials(tempCredentials);
-			
-			if (!isValid) {
-				debugLog('Credential validation failed');
-				this._view?.webview.postMessage({
-					type: 'connectionError',
-					error: 'Invalid credentials or server unreachable. Please check your URL, username, and password.'
-				});
-				return;
-			}
-			
-			debugLog('Credentials validated successfully');
-			this.credentials = tempCredentials;
-			this.connected = true;
-			
-			debugLog('Credentials set, storing...');
-			// Store credentials securely
-			await this.storeCredentials(this.credentials);
-			
-			debugLog('Creating filesystem provider...');
-			// Create filesystem provider
-			this.fsProvider = new WebDAVFileSystemProvider(this.credentials);
-			
-			// Set dependencies for filesystem provider
-			this.fsProvider.setDebugLogger(debugLog);
-			this.fsProvider.setFileIndex(globalFileIndex);
-			this.fsProvider.setDebugOutput(debugOutput);
-			
-			debugLog('FileSystemProvider created', { baseUrl, project: finalProject });
-			
-			// Set the real provider in the placeholder
-			if (globalPlaceholderProvider) {
-				globalPlaceholderProvider.setRealProvider(this.fsProvider);
-				debugLog('Real provider set in placeholder');
-			}
-
-			// Set credentials for search providers
-			if (globalFileSearchProvider) {
-				globalFileSearchProvider.setCredentials(this.credentials);
-				debugLog('Credentials set for file search provider');
-			}
-			if (globalTextSearchProvider) {
-				globalTextSearchProvider.setCredentials(this.credentials);
-				debugLog('Credentials set for text search provider');
-			}
-			if (globalFileIndex) {
-				globalFileIndex.setCredentials(this.credentials);
-				// Start indexing after credentials are set
-				globalFileIndex.rebuildIndex().catch(error => {
-					debugLog('Error rebuilding index during connect', { error: error.message });
-				});
-				debugLog('Credentials set for file index');
-			}
-
-
-			
-			debugLog('Updating webview...');
-			this.updateWebview();
-			debugLog('Webview updated successfully');
-			
-			vscode.window.showInformationMessage(`Connected to WebDAV server: ${baseUrl} (Project: ${finalProject})`);
-			debugOutput.show();
-			
-			return this.fsProvider;
-		} catch (error: any) {
-			debugLog('Connection failed', { error: error.message, stack: error.stack });
-			this._view?.webview.postMessage({
-				type: 'connectionError', 
-				error: error.message || 'Connection failed'
-			});
-			throw error; // Re-throw so the message handler can catch it too
-		}
-	}
-
-	disconnect() {
-		this.credentials = null;
-		this.connected = false;
-		this.fsProvider = null;
-		
-		// Clear the real provider from the placeholder
-		if (globalPlaceholderProvider) {
-			globalPlaceholderProvider.setRealProvider(null);
-		}
-
-		// Clear credentials from search providers
-		if (globalFileSearchProvider) {
-			globalFileSearchProvider.setCredentials(null);
-		}
-		if (globalTextSearchProvider) {
-			globalTextSearchProvider.setCredentials(null);
-		}
-		if (globalFileIndex) {
-			globalFileIndex.setCredentials(null);
-		}
-
-
-		
-		this.updateWebview();
-		vscode.window.showInformationMessage('Disconnected from WebDAV server');
-		this.clearStoredCredentials();
-	}
-
-	async restoreConnection() {
-		debugLog('Attempting to restore previous connection');
-		try {
-			const storedCredentials = await this.getStoredCredentials();
-			if (storedCredentials) {
-				debugLog('Found stored credentials, restoring connection');
-				this.credentials = storedCredentials;
-				this.connected = true;
-				this.fsProvider = new WebDAVFileSystemProvider(this.credentials);
-				
-				// Set dependencies for filesystem provider
-				this.fsProvider.setDebugLogger(debugLog);
-				this.fsProvider.setFileIndex(globalFileIndex);
-				this.fsProvider.setDebugOutput(debugOutput);
-				
-				// Set the real provider in the placeholder IMMEDIATELY
-				if (globalPlaceholderProvider) {
-					globalPlaceholderProvider.setRealProvider(this.fsProvider);
-					debugLog('Real provider set in placeholder during restore');
-				}
-
-				// Set credentials for search providers
-				if (globalFileSearchProvider) {
-					globalFileSearchProvider.setCredentials(this.credentials);
-					debugLog('Credentials set for file search provider during restore');
-				}
-				if (globalTextSearchProvider) {
-					globalTextSearchProvider.setCredentials(this.credentials);
-					debugLog('Credentials set for text search provider during restore');
-				}
-				if (globalFileIndex) {
-					globalFileIndex.setCredentials(this.credentials);
-					// Start indexing after credentials are set
-					globalFileIndex.rebuildIndex().catch(error => {
-						debugLog('Error rebuilding index during restore', { error: error.message });
-					});
-					debugLog('Credentials set for file index during restore');
-				}
-
-
-				
-				this.updateWebview();
-				
-				vscode.window.showInformationMessage(`Reconnected to WebDAV server: ${storedCredentials.url} (Project: ${storedCredentials.project})`);
-				debugLog('Connection restored successfully', { url: storedCredentials.url, project: storedCredentials.project });
-				return this.fsProvider;
-			} else {
-				debugLog('No stored credentials found');
-			}
-		} catch (error: any) {
-			debugLog('Failed to restore connection', { error: error.message });
-		}
-		return null;
-	}
-
-	private async storeCredentials(credentials: WebDAVCredentials) {
-		try {
-			// Store in VS Code secrets
-			await globalContext.secrets.store('webdav-credentials', JSON.stringify(credentials));
-			debugLog('Credentials stored in VS Code secrets');
-			
-			// Also store in localStorage as fallback for web environments
-			if (typeof localStorage !== 'undefined') {
-				localStorage.setItem('webdav-credentials', JSON.stringify(credentials));
-				debugLog('Credentials stored in localStorage as fallback');
-			}
-		} catch (error: any) {
-			debugLog('Failed to store credentials', { error: error.message });
-		}
-	}
-
-	private async getStoredCredentials(): Promise<WebDAVCredentials | null> {
-		let vsCodeCredentials: WebDAVCredentials | null = null;
-		let localStorageCredentials: WebDAVCredentials | null = null;
-
-		// Try VS Code secrets first
-		try {
-			const stored = await globalContext.secrets.get('webdav-credentials');
-			if (stored) {
-				vsCodeCredentials = JSON.parse(stored) as WebDAVCredentials;
-				debugLog('Retrieved credentials from VS Code secrets');
-			}
-		} catch (error: any) {
-			debugLog('Failed to get credentials from VS Code secrets', { error: error.message });
-		}
-		
-		// Check localStorage
-		try {
-			if (typeof localStorage !== 'undefined') {
-				const stored = localStorage.getItem('webdav-credentials');
-				if (stored) {
-					localStorageCredentials = JSON.parse(stored) as WebDAVCredentials;
-					debugLog('Retrieved credentials from localStorage');
-				}
-			}
-		} catch (error: any) {
-			debugLog('Failed to get credentials from localStorage', { error: error.message });
-		}
-
-		// Sync credentials if they exist in one but not the other
-		if (vsCodeCredentials && !localStorageCredentials) {
-			try {
-				if (typeof localStorage !== 'undefined') {
-					localStorage.setItem('webdav-credentials', JSON.stringify(vsCodeCredentials));
-					debugLog('Synced credentials from VS Code secrets to localStorage');
-				}
-			} catch (error: any) {
-				debugLog('Failed to sync to localStorage', { error: error.message });
-			}
-			return vsCodeCredentials;
-		} else if (!vsCodeCredentials && localStorageCredentials) {
-			try {
-				await globalContext.secrets.store('webdav-credentials', JSON.stringify(localStorageCredentials));
-				debugLog('Synced credentials from localStorage to VS Code secrets');
-			} catch (error: any) {
-				debugLog('Failed to sync to VS Code secrets', { error: error.message });
-			}
-			return localStorageCredentials;
-		} else if (vsCodeCredentials) {
-			// Both exist, prefer VS Code secrets
-			return vsCodeCredentials;
-		}
-		
-		debugLog('No stored credentials found in any storage');
-		return null;
-	}
-
-	private async clearStoredCredentials() {
-		try {
-			// Clear from VS Code secrets
-			await globalContext.secrets.delete('webdav-credentials');
-			debugLog('Credentials cleared from VS Code secrets');
-		} catch (error: any) {
-			debugLog('Failed to clear VS Code secrets', { error: error.message });
-		}
-		
-		try {
-			// Clear from localStorage
-			if (typeof localStorage !== 'undefined') {
-				localStorage.removeItem('webdav-credentials');
-				debugLog('Credentials cleared from localStorage');
-			}
-		} catch (error: any) {
-			debugLog('Failed to clear localStorage', { error: error.message });
-		}
-	}
-
-	async openFiles() {
-		if (!this.fsProvider || !this.credentials?.project) {
-			vscode.window.showErrorMessage('Not connected to WebDAV server');
-			return;
-		}
-
-		debugLog('Opening files - ensuring connection is active', { 
-			hasProvider: !!this.fsProvider, 
-			hasCredentials: !!this.credentials,
-			connected: this.connected,
-			project: this.credentials?.project 
-		});
-
-		// Ensure the global placeholder provider has the real provider set
-		if (globalPlaceholderProvider && this.fsProvider) {
-			debugLog('Setting real provider in global placeholder');
-			globalPlaceholderProvider.setRealProvider(this.fsProvider);
-		} else {
-			debugLog('Warning: Global placeholder provider or fs provider not available');
-		}
-
-		// Add WebDAV as a workspace folder to integrate with VS Code's native explorer
-		const workspaceFolder: vscode.WorkspaceFolder = {
-			uri: vscode.Uri.parse(`webdav:/`),
-			name: this.credentials.project, // Use just the project name
-			index: 0
-		};
-
-		debugLog('Adding WebDAV workspace folder', { workspaceFolder });
-
-		// Add the workspace folder to VS Code
-		const success = vscode.workspace.updateWorkspaceFolders(0, 0, workspaceFolder);
-		
-		if (success) {
-			debugLog('Workspace folder added successfully');
-			vscode.window.showInformationMessage(`WebDAV project "${this.credentials.project}" added to workspace`);
-			
-			// Don't update webview after adding to workspace to prevent reset
-			// The connection should remain intact
-			debugLog('Preserving connection state after workspace addition');
-			
-			// Index all files to make them searchable
-			if (this.fsProvider) {
-				setTimeout(async () => {
-					await this.fsProvider!.indexAllFiles();
-					debugLog('Files indexed after workspace addition');
-				}, 1000);
-			}
-			
-			// Force refresh the explorer to show the new files
-			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-		} else {
-			debugLog('Failed to add workspace folder');
-			vscode.window.showErrorMessage('Failed to add WebDAV folder to workspace');
-		}
-	}
-
-	private extractProjectFromUrl(url: string): string | null {
-		// Extract project name from URL pattern: .../apps/remote/PROJECT_NAME
-		const remotePattern = /\/apps\/remote\/([^\/\?#]+)/;
-		const match = url.match(remotePattern);
-		return match ? match[1] : null;
-	}
-
-	private getBaseUrl(url: string): string {
-		// Remove /apps/remote/project_name from the URL to get base server URL
-		const remotePattern = /\/apps\/remote\/[^\/\?#]+.*$/;
-		return url.replace(remotePattern, '');
-	}
-
-	private async validateCredentials(credentials: WebDAVCredentials): Promise<boolean> {
-		try {
-			debugLog('Testing WebDAV connection', { url: credentials.url, project: credentials.project });
-			
-			// Test connection by attempting to list the project root directory
-			const testURL = `${credentials.url}/apps/remote/${credentials.project}/`;
-			
-			const response = await fetch(testURL, {
-				method: 'GET',
-				headers: {
-					'Authorization': `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`,
-					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-					'User-Agent': 'VSCode-WebDAV-Extension'
-				},
-				mode: 'cors',
-				credentials: 'include'
-			});
-			
-			debugLog('Validation response', { status: response.status, statusText: response.statusText });
-			
-			// Check if the response is successful (200-299 range)
-			if (response.ok) {
-				debugLog('Credential validation successful');
-				return true;
-			} else if (response.status === 401 || response.status === 403) {
-				debugLog('Authentication failed', { status: response.status });
-				return false;
-			} else {
-				debugLog('Server error during validation', { status: response.status });
-				return false;
-			}
-		} catch (error: any) {
-			debugLog('Credential validation error', { error: error.message });
-			
-			// Check if this is a CORS error
-			if (error.message === 'Failed to fetch') {
-				debugLog('CORS Error during validation - assuming credentials are valid for now');
-				// In web environments, CORS might prevent validation, but credentials could still be valid
-				// We'll allow it to proceed but log the issue
-				return true;
-			}
-			
-			return false;
-		}
-	}
-}
-
-
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 let debugOutput: vscode.OutputChannel;
@@ -1014,14 +121,12 @@ let globalContext: vscode.ExtensionContext;
 let globalFileSearchProvider: WebDAVFileSearchProvider;
 let globalTextSearchProvider: WebDAVTextSearchProvider;
 let globalFileIndex: WebDAVFileIndex;
+let globalStubFileCreator: (() => Promise<void>) | null = null;
 
 function debugLog(message: string, data?: any) {
 	const timestamp = new Date().toISOString();
-	if (data) {
-		debugOutput.appendLine(`[${timestamp}] ${message}: ${JSON.stringify(data, null, 2)}`);
-	} else {
-		debugOutput.appendLine(`[${timestamp}] ${message}`);
-	}
+	const dataStr = data ? ` - ${JSON.stringify(data)}` : '';
+	debugOutput.appendLine(`[${timestamp}] ${message}${dataStr}`);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -1042,10 +147,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Register a placeholder filesystem provider immediately
 	globalPlaceholderProvider = new PlaceholderFileSystemProvider();
-	context.subscriptions.push(
-		vscode.workspace.registerFileSystemProvider('webdav', globalPlaceholderProvider, { isCaseSensitive: false })
-	);
-	debugLog('Global placeholder provider registered');
+	const providerRegistration = vscode.workspace.registerFileSystemProvider('webdav', globalPlaceholderProvider, { 
+		isCaseSensitive: false,
+		isReadonly: false
+	});
+	context.subscriptions.push(providerRegistration);
+	debugLog('Global placeholder provider registered', {
+		scheme: 'webdav',
+		isCaseSensitive: false,
+		isReadonly: false
+	});
+
 
 	// Initialize and register search providers
 	globalFileSearchProvider = new WebDAVFileSearchProvider();
@@ -1086,79 +198,139 @@ export function activate(context: vscode.ExtensionContext) {
 	
 	if (includeStubs) {
 		try {
-			// For virtual files we don't need actual workspace folders, just a WebDAV connection
-			if (true) { // Always try to create virtual files when WebDAV is connected
-				
-				// Create virtual stub file asynchronously  
-				(async () => {
-					try {
-						// Get the real WebDAV provider
-						const realProvider = globalPlaceholderProvider?.getRealProvider();
-						if (!realProvider) {
-							debugLog('No WebDAV provider available for virtual file creation');
-							return;
-						}
-						
-						const sourceStubUri = vscode.Uri.joinPath(context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
-						const stubContent = await vscode.workspace.fs.readFile(sourceStubUri);
-						
-						// Create virtual directories
-						realProvider.createVirtualDirectory('/.stubs');
-						
-						// Create virtual stub file
-						realProvider.createVirtualFile('/.stubs/plugin-api.stubs.php', stubContent);
-						debugLog('Created virtual PHP stub file in WebDAV filesystem', { size: stubContent.length });
-						
-						// Add stub file to php.stubs configuration
-						const phpConfig = vscode.workspace.getConfiguration('php');
-						const phpStubs = phpConfig.get('stubs', []) as string[];
-						const virtualStubPath = 'webdav:/.stubs/plugin-api.stubs.php';
-						
-						// Ensure "*" is included (DEVSENSE shortcut for all default stubs)
-						if (!phpStubs.includes('*')) {
-							phpStubs.unshift('*');
-						}
-						
-						if (!phpStubs.includes(virtualStubPath)) {
-							phpStubs.push(virtualStubPath);
-							phpConfig.update('stubs', phpStubs, vscode.ConfigurationTarget.Workspace).then(() => {
-								debugLog('Added virtual PHP stub file to php.stubs configuration');
-							}, (error: any) => {
-								debugLog('Failed to update php.stubs configuration', { error: error.message });
+			// Create virtual stub file creation function  
+			const createVirtualStubFile = async () => {
+				try {
+					// Get the real WebDAV provider
+					const realProvider = globalPlaceholderProvider?.getRealProvider();
+					if (!realProvider) {
+						debugLog('No WebDAV provider available for virtual file creation');
+						return;
+					}
+					
+					const sourceStubUri = vscode.Uri.joinPath(context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
+					const stubContent = await vscode.workspace.fs.readFile(sourceStubUri);
+					
+					// Create virtual directories with ~ prefix
+					realProvider.createVirtualDirectory('~/.stubs');
+					
+					// Create virtual stub file with ~ prefix to match expected path format
+					realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
+					debugLog('Created virtual PHP stub file in WebDAV filesystem', { size: stubContent.length });
+					
+					// Force refresh to ensure the file is visible
+					await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
+					
+					// Pre-load the stub file to enable "go to definition" without manual opening
+					// Wait for file system to be fully ready and workspace to be loaded
+					setTimeout(async () => {
+						try {
+							// Check if WebDAV workspace exists
+							const workspaceFolders = vscode.workspace.workspaceFolders || [];
+							const hasWebdavWorkspace = workspaceFolders.some(folder => folder.uri.scheme === 'webdav');
+							
+							if (!hasWebdavWorkspace) {
+								debugLog('No WebDAV workspace found, skipping stub file pre-load');
+								return;
+							}
+							
+							const stubUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
+							
+							// First verify the file exists through our file system provider
+							const realProvider = globalPlaceholderProvider?.getRealProvider();
+							if (realProvider && realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
+								// Try to open the document invisibly to register it with VS Code
+								const document = await vscode.workspace.openTextDocument(stubUri);
+								debugLog('Pre-loaded stub file for go-to-definition support', { 
+									uri: stubUri.toString(),
+									documentLength: document.getText().length
+								});
+								
+								// Close the document again since we just wanted to register it
+								await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+							} else {
+								debugLog('Virtual stub file not found in provider');
+							}
+						} catch (error: any) {
+							debugLog('Failed to pre-load stub file', { 
+								error: error.message,
+								errorName: error.name,
+								stack: error.stack 
 							});
 						}
-						
-						// Also try to configure Intelephense if available
-						const intelephenseConfig = vscode.workspace.getConfiguration('intelephense');
-						if (intelephenseConfig) {
-							// Add the virtual WebDAV data/persistent path to environment.includePaths
-							const includePaths = intelephenseConfig.get('environment.includePaths', []) as string[];
-							const virtualDataPath = 'webdav:/.stubs';
-							if (!includePaths.includes(virtualDataPath)) {
-								includePaths.push(virtualDataPath);
-								intelephenseConfig.update('environment.includePaths', includePaths, vscode.ConfigurationTarget.Workspace).then(() => {
-									debugLog('Added virtual WebDAV .stubs path to Intelephense include paths');
-								}, (error: any) => {
-									debugLog('Failed to update Intelephense include paths', { error: error.message });
-								});
-							}
-						}
-						
-						debugLog('Virtual PHP stub file registered for autocompletion', { virtualPath: virtualStubPath });
-					} catch (error: any) {
-						debugLog('Failed to create virtual stub file', { error: error.message });
-						// Continue without the stub file
+					}, 3000); // Wait 3 seconds to ensure everything is ready
+					
+					// Add stub file to php.stubs configuration using relative path only
+					// Avoid webdav:// URIs in PHP configuration to prevent path resolution issues
+					const phpConfig = vscode.workspace.getConfiguration('php');
+					const phpStubs = phpConfig.get('stubs', []) as string[];
+					const relativeStubPath = '.stubs/plugin-api.stubs.php';
+					
+					// Ensure "*" is included (DEVSENSE shortcut for all default stubs)
+					if (!phpStubs.includes('*')) {
+						phpStubs.unshift('*');
 					}
-				})();
-			}
+					
+					// Only use relative path to avoid URI resolution issues
+					if (!phpStubs.includes(relativeStubPath)) {
+						phpStubs.push(relativeStubPath);
+						phpConfig.update('stubs', phpStubs, vscode.ConfigurationTarget.Workspace).then(() => {
+							debugLog('Added virtual PHP stub file to php.stubs configuration', { 
+								relativePath: relativeStubPath,
+								allStubs: phpStubs
+							});
+						}, (error: any) => {
+							debugLog('Failed to update php.stubs configuration', { error: error.message });
+						});
+					}
+					
+					// Also try to configure Intelephense if available
+					const intelephenseConfig = vscode.workspace.getConfiguration('intelephense');
+					if (intelephenseConfig) {
+						// Add the virtual WebDAV data/persistent path to environment.includePaths
+						// Use relative path only to avoid URI resolution issues
+						const includePaths = intelephenseConfig.get('environment.includePaths', []) as string[];
+						const relativeDataPath = '.stubs';
+						
+						if (!includePaths.includes(relativeDataPath)) {
+							includePaths.push(relativeDataPath);
+							intelephenseConfig.update('environment.includePaths', includePaths, vscode.ConfigurationTarget.Workspace).then(() => {
+								debugLog('Added virtual WebDAV .stubs path to Intelephense include paths', { includePaths });
+							}, (error: any) => {
+								debugLog('Failed to update Intelephense include paths', { error: error.message });
+							});
+						}
+					}
+					
+					debugLog('Virtual PHP stub file registered for autocompletion', { 
+						relativePath: relativeStubPath
+					});
+				} catch (error: any) {
+					debugLog('Failed to create virtual stub file', { error: error.message });
+					// Continue without the stub file
+				}
+			};
+			
+			// Store the stub file creator for later use
+			globalStubFileCreator = createVirtualStubFile;
 		} catch (error: any) {
 			debugLog('Failed to register PHP stub file', { error: error.message });
 		}
 	}
 
 
-	// Create WebView provider
-	const viewProvider = new WebDAVViewProvider(context.extensionUri);
+	// Create WebView provider with proper dependencies
+	const viewProvider = new WebDAVViewProvider(
+		context.extensionUri,
+		debugLog,
+		globalPlaceholderProvider,
+		globalFileSearchProvider,
+		globalTextSearchProvider,
+		globalFileIndex,
+		globalContext,
+		globalStubFileCreator,
+		debugOutput
+	);
 	
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(WebDAVViewProvider.viewType, viewProvider)
@@ -1185,6 +357,62 @@ export function activate(context: vscode.ExtensionContext) {
 		}, 500);
 	});
 	context.subscriptions.push(workspaceWatcher);
+
+	// Hook into document opening to handle go-to-definition requests
+	const documentOpenHandler = vscode.workspace.onDidOpenTextDocument((document) => {
+		const uri = document.uri;
+		debugLog('Document opened', { 
+			uri: uri.toString(),
+			scheme: uri.scheme,
+			path: uri.path,
+			fsPath: uri.fsPath
+		});
+
+		// Check if this is a malformed webdav URI that needs correction
+		if (uri.toString().startsWith('/webdav:')) {
+			debugLog('Detected malformed webdav URI in document opening', {
+				original: uri.toString(),
+				path: uri.path,
+				scheme: uri.scheme
+			});
+			
+			// The URI correction will be handled by the file system provider
+			// but we can log this for debugging purposes
+		}
+
+		// Check if this is a webdav document that was successfully opened
+		if (uri.scheme === 'webdav') {
+			debugLog('WebDAV document opened successfully', {
+				uri: uri.toString(),
+				path: uri.path,
+				languageId: document.languageId,
+				lineCount: document.lineCount
+			});
+
+			// If this is a stub file being opened by go-to-definition, ensure it's properly loaded
+			if (uri.path.includes('.stubs/')) {
+				debugLog('Stub file opened via go-to-definition', {
+					uri: uri.toString(),
+					path: uri.path
+				});
+				
+				// This indicates that go-to-definition is working for stub files
+				vscode.window.showInformationMessage('WebDAV stub file opened successfully!', 'Dismiss');
+			}
+		}
+	});
+	context.subscriptions.push(documentOpenHandler);
+
+	// Hook into text document will save to handle file modifications
+	const documentWillSaveHandler = vscode.workspace.onWillSaveTextDocument((event) => {
+		if (event.document.uri.scheme === 'webdav') {
+			debugLog('WebDAV document will save', {
+				uri: event.document.uri.toString(),
+				reason: event.reason
+			});
+		}
+	});
+	context.subscriptions.push(documentWillSaveHandler);
 
 	const showDebugCommand = vscode.commands.registerCommand('automate-webdav.showDebug', () => {
 		debugOutput.show();
@@ -1219,14 +447,14 @@ export function activate(context: vscode.ExtensionContext) {
 			
 			// Create virtual directories
 			debugLog('Creating virtual directories for stub file');
-			realProvider.createVirtualDirectory('/.stubs');
+			realProvider.createVirtualDirectory('~/.stubs');
 			
 			// Read the stub file content
 			const stubContent = await vscode.workspace.fs.readFile(stubUri);
 			debugLog('Read source stub file', { size: stubContent.length });
 			
 			// Create virtual stub file
-			realProvider.createVirtualFile('/.stubs/plugin-api.stubs.php', stubContent);
+			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
 			
 			// Refresh the file explorer to show the new virtual files
 			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
@@ -1234,7 +462,7 @@ export function activate(context: vscode.ExtensionContext) {
 			
 			// Show success message
 			vscode.window.showInformationMessage('PHP Plugin API stub file added as virtual file in WebDAV workspace for autocompletion!');
-			debugLog('Virtual stub file created in WebDAV filesystem', { virtualPath: '/.stubs/plugin-api.stubs.php' });
+			debugLog('Virtual stub file created in WebDAV filesystem', { virtualPath: '~/.stubs/plugin-api.stubs.php' });
 			
 		} catch (error: any) {
 			debugLog('Failed to add virtual stub file', { error: error.message });
@@ -1258,7 +486,7 @@ export function activate(context: vscode.ExtensionContext) {
 			
 			// Create virtual directories
 			debugLog('Creating virtual directories');
-			realProvider.createVirtualDirectory('/.stubs');
+			realProvider.createVirtualDirectory('~/.stubs');
 			realProvider.createVirtualDirectory('/.vscode');
 			debugLog('Virtual directories created');
 			
@@ -1269,7 +497,7 @@ export function activate(context: vscode.ExtensionContext) {
 			debugLog('Source stub file read successfully', { contentSize: stubContent.length });
 			
 			// Create virtual stub file
-			realProvider.createVirtualFile('/.stubs/plugin-api.stubs.php', stubContent);
+			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
 			debugLog('Virtual stub file created');
 			
 			// Prepare settings content
@@ -1328,7 +556,7 @@ export function activate(context: vscode.ExtensionContext) {
 			// Update VS Code configuration programmatically
 			const phpConfig = vscode.workspace.getConfiguration('php');
 			const currentStubs = phpConfig.get('stubs', []) as string[];
-			const newStubs = [...new Set([...currentStubs, '*', 'webdav:/.stubs/plugin-api.stubs.php'])];
+			const newStubs = [...new Set([...currentStubs, '*', '.stubs/plugin-api.stubs.php'])];
 			
 			await phpConfig.update('stubs', newStubs, vscode.ConfigurationTarget.Workspace);
 			debugLog('Updated VS Code php.stubs configuration', { newStubs });
@@ -1340,7 +568,7 @@ export function activate(context: vscode.ExtensionContext) {
 			// Show success message
 			vscode.window.showInformationMessage('PHP stub configuration setup complete! Virtual files created in WebDAV workspace.');
 			debugLog('PHP stub configuration setup complete', { 
-				virtualStubPath: '/.stubs/plugin-api.stubs.php',
+				virtualStubPath: '~/.stubs/plugin-api.stubs.php',
 				virtualSettingsPath: '/.vscode/settings.json',
 				stubSize: stubContent.length,
 				settingsSize: settingsJson.length
@@ -1426,24 +654,107 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	const testGoToDefinitionCommand = vscode.commands.registerCommand('automate-webdav.testGoToDefinition', async () => {
+		debugLog('Test go-to-definition command triggered');
+		
+		try {
+			// Test opening the stub file directly
+			const stubUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
+			debugLog('Testing direct opening of stub file', { uri: stubUri.toString() });
+			
+			// Check if WebDAV provider is available
+			const realProvider = globalPlaceholderProvider?.getRealProvider();
+			if (!realProvider) {
+				vscode.window.showWarningMessage('No WebDAV connection found. Please connect to WebDAV first.');
+				return;
+			}
+			
+			// Check if stub file exists
+			if (!realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
+				vscode.window.showWarningMessage('Stub file not found. Creating it now...');
+				if (globalStubFileCreator) {
+					await globalStubFileCreator();
+					vscode.window.showInformationMessage('Stub file created. Try again.');
+				}
+				return;
+			}
+			
+			// Try to open the document
+			const document = await vscode.workspace.openTextDocument(stubUri);
+			await vscode.window.showTextDocument(document);
+			
+			vscode.window.showInformationMessage('Stub file opened successfully! Go-to-definition should work now.');
+			debugLog('Successfully opened stub file for testing', {
+				uri: stubUri.toString(),
+				lineCount: document.lineCount,
+				languageId: document.languageId
+			});
+			
+		} catch (error: any) {
+			debugLog('Failed to test go-to-definition', { error: error.message, stack: error.stack });
+			vscode.window.showErrorMessage(`Failed to test go-to-definition: ${error.message}`);
+		}
+	});
+
 	const debugFileSystemCommand = vscode.commands.registerCommand('automate-webdav.debugFileSystem', async () => {
 		debugLog('Debug file system command triggered');
 		
 		try {
 			const realProvider = globalPlaceholderProvider?.getRealProvider();
-			if (!realProvider) {
-				vscode.window.showWarningMessage('No WebDAV connection found.');
-				return;
-			}
-			
-			// Get virtual file information
-			const virtualFileCount = realProvider.getVirtualFileCount();
 			debugLog('File system debug info', {
-				virtualFileCount,
+				hasPlaceholderProvider: !!globalPlaceholderProvider,
 				hasRealProvider: !!realProvider,
-				placeholderProvider: !!globalPlaceholderProvider,
+				virtualFileCount: realProvider?.getVirtualFileCount() || 0,
 				hasFileIndex: !!globalFileIndex
 			});
+			
+			// Debug virtual file storage
+			if (realProvider) {
+				// Check what's actually stored in the virtual files map
+				const virtualFileDebug = (realProvider as any)._virtualFiles as Map<string, any>;
+				if (virtualFileDebug) {
+					const storedKeys = Array.from(virtualFileDebug.keys());
+					debugLog('Virtual files stored in provider', {
+						storedKeys,
+						totalFiles: storedKeys.length
+					});
+					
+					// Check specifically for our stub file
+					const stubPath = '~/.stubs/plugin-api.stubs.php';
+					const hasStubFile = virtualFileDebug.has(stubPath);
+					debugLog('Stub file storage check', {
+						path: stubPath,
+						exists: hasStubFile,
+						stubKeys: storedKeys.filter(key => key.includes('stubs'))
+					});
+				}
+			}
+			
+			// Test if file system provider is working
+			try {
+				const testUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
+				debugLog('Testing access to stub file', { 
+					uri: testUri.toString(),
+					path: testUri.path,
+					scheme: testUri.scheme
+				});
+				
+				if (realProvider && realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
+					debugLog('Virtual stub file exists in provider');
+					
+					// Try to read the file
+					const content = await realProvider.readFile(testUri);
+					debugLog('Successfully read stub file', { size: content.length });
+					
+					vscode.window.showInformationMessage(`Stub file accessible: ${content.length} bytes. File system is working correctly.`);
+				} else {
+					debugLog('Virtual stub file not found in provider');
+					vscode.window.showWarningMessage('Virtual stub file not found. Try connecting to WebDAV first.');
+				}
+			} catch (error: any) {
+				debugLog('Error accessing stub file directly', { error: error.message, stack: error.stack });
+				vscode.window.showErrorMessage(`Error accessing stub file: ${error.message}`);
+			}
 			
 			// Check file index contents
 			if (globalFileIndex) {
@@ -1460,20 +771,6 @@ export function activate(context: vscode.ExtensionContext) {
 				});
 			}
 			
-			// Try to manually call readDirectory on root
-			try {
-				const rootUri = vscode.Uri.parse('webdav:/');
-				debugLog('Manually calling readDirectory on root');
-				const rootFiles = await realProvider.readDirectory(rootUri);
-				debugLog('Root directory contents', { rootFiles });
-				
-				const indexSize = globalFileIndex?.getIndexSize() || 0;
-				vscode.window.showInformationMessage(`File system debug: ${virtualFileCount} virtual files, ${rootFiles.length} files in root, ${indexSize} indexed files. Check debug output for details.`);
-			} catch (error: any) {
-				debugLog('Error reading root directory', { error: error.message });
-				vscode.window.showErrorMessage(`Error reading root directory: ${error.message}`);
-			}
-			
 		} catch (error: any) {
 			debugLog('Debug file system failed', { error: error.message });
 			vscode.window.showErrorMessage(`Debug failed: ${error.message}`);
@@ -1485,6 +782,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(addStubFileCommand);
 	context.subscriptions.push(setupPhpStubsCommand);
 	context.subscriptions.push(testVirtualFileCommand);
+	context.subscriptions.push(testGoToDefinitionCommand);
 	context.subscriptions.push(debugFileSystemCommand);
 }
 

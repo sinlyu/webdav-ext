@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { WebDAVCredentials, WebDAVFileItem } from './types';
-import { WebDAVFileIndex } from './fileIndex';
+import { WebDAVCredentials, WebDAVFileItem } from '../types';
+import { WebDAVFileIndex } from '../core/fileIndex';
+import { parseDirectoryHTML } from '../utils/htmlUtils';
 
 export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
@@ -47,7 +48,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		// Emit file change event
 		this._emitter.fire([{
 			type: vscode.FileChangeType.Created,
-			uri: vscode.Uri.parse(`webdav:${path}`)
+			uri: this.createWebdavUri(path)
 		}]);
 		
 		// Trigger file explorer refresh for virtual files
@@ -72,7 +73,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		// Emit file change event
 		this._emitter.fire([{
 			type: vscode.FileChangeType.Created,
-			uri: vscode.Uri.parse(`webdav:${path}`)
+			uri: this.createWebdavUri(path)
 		}]);
 		
 		// Trigger file explorer refresh for virtual files
@@ -110,6 +111,13 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
 		const path = uri.path;
 		this._debugLog('stat() called', { uri: uri.toString(), path });
+
+		// Handle malformed URIs that might come from language servers
+		if (uri.toString().startsWith('/webdav:') || uri.fsPath.startsWith('/webdav:')) {
+			this._debugLog('Detected malformed URI in stat()', { uri: uri.toString() });
+			// This will be handled by the PlaceholderProvider's URI correction
+			throw vscode.FileSystemError.FileNotFound('Malformed URI detected - should be corrected by PlaceholderProvider');
+		}
 		
 		// Check for virtual files first
 		const virtualFile = this._virtualFiles.get(path);
@@ -121,6 +129,29 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 				mtime: virtualFile.mtime,
 				size: virtualFile.content.length
 			};
+		}
+
+		// Debug: Check for path format issues
+		this._debugLog('Virtual file not found in stat()', { path, virtualFiles: this._virtualFiles.size });
+
+		// Try alternative path formats
+		const alternativePaths = [
+			`~${path}`,                    // Add ~ prefix
+			path.substring(1),             // Remove leading slash
+			path.replace(/^\/+/, '/'),     // Normalize multiple slashes
+		];
+
+		for (const altPath of alternativePaths) {
+			const altFile = this._virtualFiles.get(altPath);
+			if (altFile) {
+				this._debugLog('Found virtual file with alternative path in stat()', { path, foundPath: altPath });
+				return {
+					type: altFile.isDirectory ? vscode.FileType.Directory : vscode.FileType.File,
+					ctime: altFile.mtime,
+					mtime: altFile.mtime,
+					size: altFile.content.length
+				};
+			}
 		}
 		
 		// Handle root path
@@ -162,12 +193,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	}
 
 	async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
-		this._debugLog('readDirectory() called', { 
-			uri: uri.toString(), 
-			path: uri.path,
-			virtualFileCount: this._virtualFiles.size,
-			virtualFiles: Array.from(this._virtualFiles.keys())
-		});
+		this._debugLog('readDirectory() called', { uri: uri.toString(), virtualFiles: this._virtualFiles.size });
 		
 		const currentPath = uri.path;
 		let result: [string, vscode.FileType][] = [];
@@ -179,10 +205,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 				item.name,
 				item.isDirectory ? vscode.FileType.Directory : vscode.FileType.File
 			] as [string, vscode.FileType]);
-			this._debugLog('Real WebDAV files found', { 
-				count: result.length,
-				files: result.map(([name]) => name)
-			});
+			this._debugLog('Real WebDAV files found', { count: result.length });
 		} catch (error: any) {
 			this._debugLog('Error getting WebDAV directory listing', { error: error.message });
 			// Continue with empty result for real files
@@ -192,12 +215,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		let virtualFilesAdded = 0;
 		for (const [virtualPath, virtualFile] of this._virtualFiles.entries()) {
 			const virtualParentPath = this.getParentPath(virtualPath);
-			this._debugLog('Checking virtual file', { 
-				virtualPath, 
-				virtualParentPath, 
-				currentPath,
-				matches: virtualParentPath === currentPath
-			});
+			this._debugLog('Checking virtual file', { virtualPath, matches: virtualParentPath === currentPath });
 			
 			if (virtualParentPath === currentPath) {
 				const virtualFileName = this.getFileName(virtualPath);
@@ -207,11 +225,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 				if (!result.some(([name]) => name === virtualFileName)) {
 					result.push([virtualFileName, virtualFileType]);
 					virtualFilesAdded++;
-					this._debugLog('Added virtual file to directory listing', { 
-						virtualFileName, 
-						virtualFileType: virtualFile.isDirectory ? 'directory' : 'file',
-						virtualPath
-					});
+					this._debugLog('Added virtual file to directory listing', { virtualFileName, type: virtualFile.isDirectory ? 'dir' : 'file' });
 				} else {
 					this._debugLog('Virtual file already exists in result', { virtualFileName });
 				}
@@ -232,7 +246,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		const path = uri.path;
 		
 		// Check if this should be a virtual directory (for directories we can't create on WebDAV)
-		if (path.startsWith('/.stubs') || path.startsWith('/.vscode')) {
+		if (path.startsWith('~/.stubs') || path.startsWith('~/.vscode') || path.startsWith('/.stubs') || path.startsWith('/.vscode')) {
 			this._debugLog('Creating virtual directory', { path });
 			this.createVirtualDirectory(path);
 			return;
@@ -252,11 +266,57 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	async readFile(uri: vscode.Uri): Promise<Uint8Array> {
 		const path = uri.path;
 		
+		this._debugLog('readFile() called', { 
+			uri: uri.toString(), 
+			path,
+			scheme: uri.scheme
+		});
+
+		// Handle malformed URIs that might come from language servers
+		if (uri.toString().startsWith('/webdav:') || uri.fsPath.startsWith('/webdav:')) {
+			this._debugLog('Detected malformed URI in readFile()', {
+				original: uri.toString(),
+				fsPath: uri.fsPath,
+				path: uri.path
+			});
+			// This will be handled by the PlaceholderProvider's URI correction
+			throw vscode.FileSystemError.FileNotFound('Malformed URI detected - should be corrected by PlaceholderProvider');
+		}
+		
 		// Check for virtual files first
 		const virtualFile = this._virtualFiles.get(path);
 		if (virtualFile) {
 			this._debugLog('Reading virtual file', { path, size: virtualFile.content.length });
 			return virtualFile.content;
+		}
+
+		// Debug: Check if the file exists with alternative path formats
+		this._debugLog('Virtual file not found', { 
+			requestedPath: path,
+			availableVirtualFiles: Array.from(this._virtualFiles.keys()),
+			pathVariations: {
+				withTilde: `~${path}`,
+				withoutLeadingSlash: path.substring(1),
+				normalized: path.replace(/^\/+/, '/')
+			}
+		});
+
+		// Try alternative path formats that might work
+		const alternativePaths = [
+			`~${path}`,                    // Add ~ prefix
+			path.substring(1),             // Remove leading slash
+			path.replace(/^\/+/, '/'),     // Normalize multiple slashes
+		];
+
+		for (const altPath of alternativePaths) {
+			const altFile = this._virtualFiles.get(altPath);
+			if (altFile) {
+				this._debugLog('Found virtual file with alternative path', { 
+					requestedPath: path,
+					foundPath: altPath
+				});
+				return altFile.content;
+			}
 		}
 		
 		const filePath = uri.path.substring(1); // Remove leading slash
@@ -286,7 +346,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		const path = uri.path;
 		
 		// Check if this should be a virtual file (for files we can't write to WebDAV)
-		if (path.startsWith('/.stubs/') || path.startsWith('/.vscode/')) {
+		if (path.startsWith('~/.stubs/') || path.startsWith('~/.vscode/') || path.startsWith('/.stubs/') || path.startsWith('/.vscode/')) {
 			this._debugLog('Creating/updating virtual file', { path, size: content.length });
 			this._virtualFiles.set(path, {
 				content,
@@ -408,7 +468,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			this._debugLog('Raw HTML response length', html.length);
 			this._debugLog('First 500 chars of HTML', html.substring(0, 500));
 			
-			realItems = this.parseDirectoryHTML(html);
+			realItems = parseDirectoryHTML(html);
 			this._debugLog('Parsed real WebDAV items', realItems);
 			
 		} catch (error: any) {
@@ -569,64 +629,21 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		}
 	}
 
-	private parseDirectoryHTML(html: string): WebDAVFileItem[] {
-		this._debugLog('Parsing directory HTML', { htmlLength: html.length });
-		
-		const items: WebDAVFileItem[] = [];
-		
-		try {
-			// Use regex to parse the HTML since DOMParser is not available in web worker
-			// Look for table rows in the nodeTable
-			const tableRowRegex = /<tr[^>]*>(.*?)<\/tr>/gis;
-			const rows = html.match(tableRowRegex) || [];
-			
-			this._debugLog('Found table rows', { count: rows.length });
-			
-			for (const row of rows) {
-				// Extract name column with link
-				const nameMatch = row.match(/<td[^>]*class[^>]*nameColumn[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/is);
-				// Extract type column
-				const typeMatch = row.match(/<td[^>]*class[^>]*typeColumn[^>]*>(.*?)<\/td>/is);
-				// Extract size column
-				const sizeMatch = row.match(/<td[^>]*class[^>]*sizeColumn[^>]*>(.*?)<\/td>/is);
-				// Extract modified column
-				const modifiedMatch = row.match(/<td[^>]*class[^>]*lastModifiedColumn[^>]*>(.*?)<\/td>/is);
-				
-				if (nameMatch && typeMatch) {
-					const href = nameMatch[1]?.trim() || '';
-					const name = this.stripHtmlTags(nameMatch[2]?.trim() || '');
-					const type = this.stripHtmlTags(typeMatch[1]?.trim() || '');
-					const size = sizeMatch ? this.stripHtmlTags(sizeMatch[1]?.trim() || '') : '';
-					const modified = modifiedMatch ? this.stripHtmlTags(modifiedMatch[1]?.trim() || '') : '';
-					
-					this._debugLog('Parsed row', { name, type, size, href });
-					
-					// Skip parent directory links and empty names
-					if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
-						items.push({
-							name,
-							type,
-							size,
-							modified,
-							path: href,
-							isDirectory: type === 'Collection' || type.toLowerCase().includes('directory')
-						});
-					}
-				}
-			}
-			
-			this._debugLog('Parsed directory items', { count: items.length, items });
-			return items;
-			
-		} catch (error: any) {
-			this._debugLog('Error parsing HTML with regex', { error: error.message });
-			// Fallback: try to extract any links as a last resort
-			return this.parseDirectoryHTMLFallback(html);
-		}
-	}
 
-	private stripHtmlTags(html: string): string {
-		return html.replace(/<[^>]*>/g, '').trim();
+
+	// Helper method to create consistent webdav URIs
+	private createWebdavUri(path: string): vscode.Uri {
+		// Ensure path starts with /
+		const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+		const uri = vscode.Uri.parse(`webdav:${normalizedPath}`);
+		this._debugLog('Created webdav URI', { 
+			inputPath: path,
+			normalizedPath,
+			resultUri: uri.toString(),
+			uriPath: uri.path,
+			scheme: uri.scheme
+		});
+		return uri;
 	}
 
 	async indexAllFiles(): Promise<void> {
@@ -645,7 +662,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			
 			for (const item of items) {
 				const itemPath = dirPath ? `${dirPath}/${item.name}` : item.name;
-				const uri = vscode.Uri.parse(`webdav:/${itemPath}`);
+				const uri = this.createWebdavUri(itemPath);
 				
 				if (item.isDirectory) {
 					// Fire directory change event
@@ -662,32 +679,4 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		}
 	}
 
-	private parseDirectoryHTMLFallback(html: string): WebDAVFileItem[] {
-		this._debugLog('Using fallback HTML parsing');
-		const items: WebDAVFileItem[] = [];
-		
-		// Simple fallback: extract any links that look like files/directories
-		const linkRegex = /<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gis;
-		const links = html.matchAll(linkRegex);
-		
-		for (const link of links) {
-			const href = link[1]?.trim() || '';
-			const name = this.stripHtmlTags(link[2]?.trim() || '');
-			
-			if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
-				const isDirectory = href.endsWith('/') || !href.includes('.');
-				items.push({
-					name,
-					type: isDirectory ? 'Collection' : 'File',
-					size: '',
-					modified: '',
-					path: href,
-					isDirectory
-				});
-			}
-		}
-		
-		this._debugLog('Fallback parsed items', { count: items.length, items });
-		return items;
-	}
 }

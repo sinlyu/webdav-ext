@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { WebDAVCredentials, WebDAVFileItem } from './types';
-import { WebDAVFileIndex } from './fileIndex';
+import { WebDAVCredentials, WebDAVFileItem } from '../types';
+import { WebDAVFileIndex } from '../core/fileIndex';
+import { parseDirectoryHTML } from '../utils/htmlUtils';
 
 export class WebDAVTextSearchProvider {
 	private _credentials: WebDAVCredentials | null = null;
@@ -209,7 +210,9 @@ export class WebDAVTextSearchProvider {
 				
 				if (matches.length > 0) {
 					matchCount += matches.length;
-					const uri = vscode.Uri.parse(`webdav:/${filePath}`);
+					// Ensure path starts with /
+					const normalizedPath = filePath.startsWith('/') ? filePath : `/${filePath}`;
+					const uri = vscode.Uri.parse(`webdav:${normalizedPath}`);
 					const result = {
 						uri,
 						ranges: matches.map(match => new vscode.Range(lineNumber, match.start, lineNumber, match.end)),
@@ -332,51 +335,14 @@ export class WebDAVTextSearchProvider {
 			}
 			
 			const html = await response.text();
-			return this.parseDirectoryHTML(html);
+			return parseDirectoryHTML(html);
 		} catch (error: any) {
 			this.debugLog('Error in getDirectoryListing', { error: error.message });
 			throw error;
 		}
 	}
 
-	private parseDirectoryHTML(html: string): WebDAVFileItem[] {
-		const items: WebDAVFileItem[] = [];
-		
-		try {
-			const tableRowRegex = /<tr[^>]*>(.*?)<\/tr>/gis;
-			const rows = html.match(tableRowRegex) || [];
-			
-			for (const row of rows) {
-				const nameMatch = row.match(/<td[^>]*class[^>]*nameColumn[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/is);
-				const typeMatch = row.match(/<td[^>]*class[^>]*typeColumn[^>]*>(.*?)<\/td>/is);
-				
-				if (nameMatch && typeMatch) {
-					const href = nameMatch[1]?.trim() || '';
-					const name = this.stripHtmlTags(nameMatch[2]?.trim() || '');
-					const type = this.stripHtmlTags(typeMatch[1]?.trim() || '');
-					
-					if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
-						items.push({
-							name,
-							type,
-							size: '',
-							modified: '',
-							path: href,
-							isDirectory: type === 'Collection' || type.toLowerCase().includes('directory')
-						});
-					}
-				}
-			}
-			
-			return items;
-		} catch (error: any) {
-			return [];
-		}
-	}
 
-	private stripHtmlTags(html: string): string {
-		return html.replace(/<[^>]*>/g, '').trim();
-	}
 
 	// Debug logging placeholder - will be provided by extension
 	private debugLog(_message: string, _data?: any) {

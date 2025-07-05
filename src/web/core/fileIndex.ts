@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WebDAVCredentials, WebDAVFileItem } from './types';
+import { WebDAVCredentials, WebDAVFileItem } from '../types';
 
 export interface IndexedFile {
 	path: string;
