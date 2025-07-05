@@ -4,6 +4,7 @@
   "description": "Professional WebDAV integration for edoc Automate development with intelligent search, file indexing, and PHP IntelliSense",
   "version": "0.2.0",
   "publisher": "Sinlyu",
+  "icon": "resources/webdav_logo.png",
   "engines": {
     "vscode": "^1.101.0"
   },
