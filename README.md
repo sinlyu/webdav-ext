@@ -1,12 +1,12 @@
-# eDoc Automate WebDAV Extension for VS Code
+# edoc Automate WebDAV Extension for VS Code
 
-Professional WebDAV integration for eDoc Automate development with intelligent search, file indexing, and PHP IntelliSense. Navigate through eDoc Automate apps and WebDAV resources directly within VS Code with comprehensive development features.
+Professional WebDAV integration for edoc Automate development with intelligent search, file indexing, and PHP IntelliSense. Navigate through edoc Automate apps and WebDAV resources directly within VS Code with comprehensive development features.
 
 ## ✨ Features
 
 ### 🚀 **PHP Development & IntelliSense**
-- **Go to Definition**: Navigate to PHP function and class definitions across your eDoc Automate project
-- **PHP IntelliSense**: Enhanced autocompletion with eDoc Automate plugin API stubs
+- **Go to Definition**: Navigate to PHP function and class definitions across your edoc Automate project
+- **PHP IntelliSense**: Enhanced autocompletion with edoc Automate plugin API stubs
 - **AST-Based Analysis**: Advanced PHP parsing for accurate code navigation
 - **Automatic Stub Generation**: Plugin API stubs are automatically created for comprehensive autocompletion
 - **PHP Tools Integration**: Seamless integration with PHP Tools extension for enhanced development experience
@@ -28,14 +28,14 @@ Professional WebDAV integration for eDoc Automate development with intelligent s
 
 ### 📁 **Complete File System Support**
 - **File Operations**: Create, read, edit, delete, and rename files and folders
-- **Directory Navigation**: Browse eDoc Automate project structures seamlessly
+- **Directory Navigation**: Browse edoc Automate project structures seamlessly
 - **VS Code Integration**: Full integration with VS Code's file explorer and editor
 - **Virtual Files**: Support for stub files and configuration files
 - **Error Handling**: Comprehensive error messages and recovery
 
-### 🔧 **eDoc Automate Connection Management**
+### 🔧 **edoc Automate Connection Management**
 - **Secure Authentication**: Basic authentication with credential management
-- **eDoc Automate Branding**: Professional interface designed for eDoc Automate development
+- **edoc Automate Branding**: Professional interface designed for edoc Automate development
 - **Connection Panel**: Dedicated activity bar panel with modern UI
 - **Auto-Project Detection**: Automatic project name extraction from URLs
 - **Debug Output**: Detailed logging for troubleshooting connections and operations
@@ -44,7 +44,7 @@ Professional WebDAV integration for eDoc Automate development with intelligent s
 ## 📋 Requirements
 
 - **VS Code**: Version 1.101.0 or higher
-- **eDoc Automate Server**: Access to an eDoc Automate WebDAV-enabled server
+- **edoc Automate Server**: Access to an edoc Automate WebDAV-enabled server
 - **PHP Tools Extension**: Recommended for enhanced PHP development features
 - **Network**: Stable internet connection for WebDAV operations
 
@@ -53,16 +53,16 @@ Professional WebDAV integration for eDoc Automate development with intelligent s
 ### 1. Installation
 Install the extension from the VS Code marketplace or load the `.vsix` file.
 
-### 2. Connect to eDoc Automate Server
-1. Click the "eDoc Automate" icon in the activity bar
-2. Enter your eDoc Automate server details:
-   - **Server URL**: Your eDoc Automate server endpoint (e.g., https://your-edoc-server.com/apps/remote/project)
+### 2. Connect to edoc Automate Server
+1. Click the "edoc Automate" icon in the activity bar
+2. Enter your edoc Automate server details:
+   - **Server URL**: Your edoc Automate server endpoint (e.g., https://your-edoc-server.com/apps/remote/project)
    - **Username**: Your authentication username
    - **Password**: Your authentication password
    - **Project**: Auto-detected from URL or manually entered
 
 ### 3. Browse, Search & Develop
-- **File Explorer**: Browse files and folders in your eDoc Automate project
+- **File Explorer**: Browse files and folders in your edoc Automate project
 - **Search**: Use Ctrl+Shift+F to search across all files
 - **PHP Development**: Use F12 (Go to Definition) for PHP functions and classes
 - **Edit Files**: Open and edit files directly in VS Code with full IntelliSense
@@ -74,7 +74,7 @@ Install the extension from the VS Code marketplace or load the `.vsix` file.
 # Search for all PHP files
 *.php
 
-# Search for eDoc Automate functions
+# Search for edoc Automate functions
 addAction
 
 # Search for JavaScript files
@@ -100,10 +100,10 @@ This extension contributes the following commands:
 
 | Command | Description |
 |---------|-------------|
-| `automate-webdav.showDebug` | Show eDoc Automate Debug Output |
-| `automate-webdav.refreshWorkspace` | Refresh eDoc Automate Workspace |
-| `automate-webdav.addStubFile` | Add eDoc Automate PHP Plugin API Stubs |
-| `automate-webdav.setupPhpStubs` | Setup eDoc Automate PHP Stubs |
+| `automate-webdav.showDebug` | Show edoc Automate Debug Output |
+| `automate-webdav.refreshWorkspace` | Refresh edoc Automate Workspace |
+| `automate-webdav.addStubFile` | Add edoc Automate PHP Plugin API Stubs |
+| `automate-webdav.setupPhpStubs` | Setup edoc Automate PHP Stubs |
 
 ## 🔧 Configuration
 
@@ -130,16 +130,16 @@ The following directories are automatically excluded from search operations:
 
 ### Search Not Working
 1. Ensure VS Code version is 1.101.0 or higher
-2. Check eDoc Automate connection in the debug output
+2. Check edoc Automate connection in the debug output
 3. Verify experimental APIs are enabled (automatic)
 
 ### PHP IntelliSense Not Working
 1. Install PHP Tools extension for enhanced PHP support
-2. Ensure eDoc Automate connection is established
+2. Ensure edoc Automate connection is established
 3. Check that stub files are generated (automatic)
 
 ### Connection Issues
-1. Verify eDoc Automate server URL and credentials
+1. Verify edoc Automate server URL and credentials
 2. Ensure URL follows format: https://server.com/apps/remote/project
 3. Check network connectivity and CORS settings
 4. Review debug output for detailed error messages
@@ -157,7 +157,7 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and feature updates.
 
 ### 🎉 Latest Features
 - 🚀 **PHP Development & IntelliSense** - Comprehensive PHP development features with Go to Definition
-- 🎨 **eDoc Automate Branding** - Professional interface designed for eDoc Automate development
+- 🎨 **edoc Automate Branding** - Professional interface designed for edoc Automate development
 - ⚡ **Lightning-fast file indexing** - Revolutionary performance with instant search results
 - 🔍 **Complete VS Code search integration** - Native search experience with full API support
 - 🎯 **Smart directory exclusion** - Intelligent filtering for optimized performance
@@ -166,14 +166,14 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and feature updates.
 ## 📝 Known Issues
 
 - Search providers use VS Code's experimental APIs (stable but marked as experimental)
-- Very large eDoc Automate projects may experience slower initial indexing
-- Some eDoc Automate servers may have specific authentication requirements
+- Very large edoc Automate projects may experience slower initial indexing
+- Some edoc Automate servers may have specific authentication requirements
 - PHP IntelliSense requires PHP Tools extension for optimal experience
 
 ## 🤝 Contributing
 
-This extension is actively developed for eDoc Automate development workflows. Please report issues or suggest features through the appropriate channels.
+This extension is actively developed for edoc Automate development workflows. Please report issues or suggest features through the appropriate channels.
 
 ## 📜 License
 
-This extension is provided as-is for eDoc Automate WebDAV integration with VS Code.
+This extension is provided as-is for edoc Automate WebDAV integration with VS Code.
