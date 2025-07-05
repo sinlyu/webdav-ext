@@ -3,7 +3,9 @@ import { WebDAVCredentials } from '../types';
 import { WebDAVFileSystemProvider } from '../providers/webdavFileSystemProvider';
 import { WebDAVFileSearchProvider } from '../providers/fileSearchProvider';
 import { WebDAVTextSearchProvider } from '../providers/textSearchProvider';
+import { IPHPDefinitionProvider } from '../providers/phpDefinitionProviderInterface';
 import { WebDAVFileIndex } from '../core/fileIndex';
+import { TemplateLoader } from './templates/templateLoader';
 
 export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'webdavConnection';
@@ -18,13 +20,14 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		private readonly globalPlaceholderProvider: any,
 		private readonly globalFileSearchProvider: WebDAVFileSearchProvider,
 		private readonly globalTextSearchProvider: WebDAVTextSearchProvider,
+		private readonly globalPhpDefinitionProvider: IPHPDefinitionProvider,
 		private readonly globalFileIndex: WebDAVFileIndex,
 		private readonly globalContext: vscode.ExtensionContext,
 		private readonly globalStubFileCreator: (() => Promise<void>) | null,
 		private readonly debugOutput: vscode.OutputChannel
 	) {}
 
-	public resolveWebviewView(
+	public async resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		_context: vscode.WebviewViewResolveContext,
 		_token: vscode.CancellationToken,
@@ -36,7 +39,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			localResourceRoots: [this._extensionUri]
 		};
 
-		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+		webviewView.webview.html = await this._getHtmlForWebview(webviewView.webview);
 
 		// Add visibility change handler to maintain connection state
 		webviewView.onDidChangeVisibility(() => {
@@ -87,345 +90,11 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		this.updateWebview();
 	}
 
-	private _getHtmlForWebview(_webview: vscode.Webview) {
-		const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>WebDAV Connection</title>
-	<style>
-		body {
-			font-family: var(--vscode-font-family);
-			font-size: var(--vscode-font-size);
-			background-color: var(--vscode-sideBar-background);
-			color: var(--vscode-sideBar-foreground);
-			margin: 0;
-			padding: 16px;
-		}
-		.container { max-width: 100%; }
-		.form-group { margin-bottom: 16px; }
-		h3 {
-			color: var(--vscode-editor-foreground);
-			margin-top: 0;
-			margin-bottom: 16px;
-		}
-		label {
-			display: block;
-			margin-bottom: 4px;
-			font-weight: 600;
-			color: var(--vscode-input-foreground);
-		}
-		input {
-			width: 100%;
-			padding: 8px 12px;
-			border: 1px solid var(--vscode-input-border);
-			background-color: var(--vscode-input-background);
-			color: var(--vscode-input-foreground);
-			border-radius: 4px;
-			font-size: 13px;
-			box-sizing: border-box;
-		}
-		input:focus {
-			outline: none;
-			border-color: var(--vscode-focusBorder);
-			box-shadow: 0 0 0 1px var(--vscode-focusBorder);
-		}
-		.btn {
-			background-color: var(--vscode-button-background);
-			color: var(--vscode-button-foreground);
-			border: none;
-			padding: 8px 16px;
-			border-radius: 4px;
-			cursor: pointer;
-			font-size: 13px;
-			font-weight: 500;
-			width: 100%;
-			margin-top: 8px;
-		}
-		.btn:hover { background-color: var(--vscode-button-hoverBackground); }
-		.btn:disabled {
-			background-color: var(--vscode-button-secondaryBackground);
-			color: var(--vscode-button-secondaryForeground);
-			cursor: not-allowed;
-		}
-		.btn-secondary {
-			background-color: var(--vscode-button-secondaryBackground);
-			color: var(--vscode-button-secondaryForeground);
-		}
-		.btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
-		.status-card {
-			background-color: var(--vscode-editorWidget-background);
-			border: 1px solid var(--vscode-editorWidget-border);
-			border-radius: 6px;
-			padding: 16px;
-			margin-bottom: 16px;
-		}
-		.status-title {
-			font-weight: 600;
-			margin-bottom: 8px;
-			color: var(--vscode-editor-foreground);
-		}
-		.status-item {
-			display: flex;
-			justify-content: space-between;
-			margin-bottom: 4px;
-			font-size: 12px;
-		}
-		.status-label { color: var(--vscode-descriptionForeground); }
-		.status-value {
-			color: var(--vscode-editor-foreground);
-			font-weight: 500;
-		}
-		.success-indicator {
-			color: var(--vscode-testing-iconPassed);
-			font-weight: 600;
-		}
-		.hidden { display: none; }
-		.error {
-			color: var(--vscode-errorForeground);
-			font-size: 12px;
-			margin-top: 4px;
-		}
-		.loading {
-			opacity: 0.6;
-			pointer-events: none;
-		}
-	</style>
-</head>
-<body>
-	<div class="container">
-		<div id="connectionForm" class="connection-form">
-			<h3>WebDAV Connection</h3>
-			<form id="webdavForm">
-				<div class="form-group">
-					<label for="url">Server URL</label>
-					<input type="url" id="url" placeholder="https://server.com/apps/remote/project" required>
-					<div id="urlError" class="error hidden"></div>
-				</div>
-				<div class="form-group">
-					<label for="username">Username</label>
-					<input type="text" id="username" placeholder="Enter username" required>
-				</div>
-				<div class="form-group">
-					<label for="password">Password</label>
-					<input type="password" id="password" placeholder="Enter password" required>
-				</div>
-				<div class="form-group">
-					<label for="project">Project Name</label>
-					<input type="text" id="project" placeholder="Auto-detected or manual entry">
-					<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
-						Project will be auto-extracted from URL if available
-					</div>
-				</div>
-				<button type="submit" class="btn" id="connectBtn">Connect to WebDAV</button>
-			</form>
-		</div>
-		<div id="connectionStatus" class="hidden">
-			<div class="status-card">
-				<div class="status-title">
-					<span class="success-indicator">✓</span> Connected to WebDAV
-				</div>
-				<div class="status-item">
-					<span class="status-label">Server:</span>
-					<span class="status-value" id="connectedUrl"></span>
-				</div>
-				<div class="status-item">
-					<span class="status-label">User:</span>
-					<span class="status-value" id="connectedUser"></span>
-				</div>
-				<div class="status-item">
-					<span class="status-label">Project:</span>
-					<span class="status-value" id="connectedProject"></span>
-				</div>
-			</div>
-			<button class="btn" id="addWorkspaceBtn">Add to Workspace</button>
-			<button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
-		</div>
-	</div>
-</body>
-</html>`;
-		
-		// Add the script separately to avoid template literal issues
-		const script = this._getWebviewScript();
-		const fullHtml = html.replace('</body>', script + '</body>');
-		return fullHtml;
+	private async _getHtmlForWebview(_webview: vscode.Webview): Promise<string> {
+		const templateLoader = new TemplateLoader(this._extensionUri);
+		return await templateLoader.loadWebviewTemplate('webdav-connection');
 	}
 
-	private _getWebviewScript(): string {
-		return `
-<script>
-(function() {
-	'use strict';
-	
-	const vscode = acquireVsCodeApi();
-	
-	function setupEventHandlers() {
-		const webdavForm = document.getElementById('webdavForm');
-		if (webdavForm) {
-			webdavForm.addEventListener('submit', handleFormSubmit);
-		}
-		
-		const disconnectBtn = document.getElementById('disconnectBtn');
-		if (disconnectBtn) {
-			disconnectBtn.addEventListener('click', handleDisconnect);
-		}
-		
-		const addWorkspaceBtn = document.getElementById('addWorkspaceBtn');
-		if (addWorkspaceBtn) {
-			addWorkspaceBtn.addEventListener('click', handleAddWorkspace);
-		}
-		
-		const urlInput = document.getElementById('url');
-		if (urlInput) {
-			urlInput.addEventListener('input', handleUrlChange);
-		}
-		
-		window.addEventListener('message', handleMessage);
-	}
-	
-	function handleFormSubmit(e) {
-		e.preventDefault();
-		
-		const urlInput = document.getElementById('url');
-		const usernameInput = document.getElementById('username');
-		const passwordInput = document.getElementById('password');
-		const projectInput = document.getElementById('project');
-		
-		if (!urlInput || !usernameInput || !passwordInput || !projectInput) {
-			console.error('Form elements not found');
-			return;
-		}
-		
-		const url = urlInput.value;
-		const username = usernameInput.value;
-		const password = passwordInput.value;
-		let project = projectInput.value;
-		
-		if (!project) {
-			const match = url.match(/\\/apps\\/remote\\/([^\\/\\?#]+)/);
-			project = match ? match[1] : '';
-		}
-		
-		if (!project) {
-			showError('Project name required. Please add it to the URL or enter manually.');
-			return;
-		}
-		
-		hideError();
-		setLoadingState(true);
-		
-		vscode.postMessage({
-			type: 'connect',
-			url: url,
-			username: username,
-			password: password,
-			project: project
-		});
-	}
-	
-	function handleDisconnect() {
-		vscode.postMessage({ type: 'disconnect' });
-	}
-	
-	function handleAddWorkspace() {
-		vscode.postMessage({ type: 'addToWorkspace' });
-	}
-	
-	function handleUrlChange(e) {
-		const url = e.target.value;
-		const projectField = document.getElementById('project');
-		
-		if (url && projectField && !projectField.value) {
-			const match = url.match(/\\/apps\\/remote\\/([^\\/\\?#]+)/);
-			if (match) {
-				projectField.value = match[1];
-			}
-		}
-	}
-	
-	function handleMessage(event) {
-		const message = event.data;
-		console.log('WebView received message:', message);
-		
-		switch (message.type) {
-			case 'connectionStatus':
-				if (message.connected) {
-					showConnectionStatus(message);
-				} else {
-					showConnectionForm();
-				}
-				break;
-			case 'connectionError':
-				console.log('Connection error received:', message.error);
-				setLoadingState(false);
-				showError(message.error || 'Connection failed');
-				break;
-		}
-	}
-	
-	function showConnectionStatus(message) {
-		const connectionForm = document.getElementById('connectionForm');
-		const connectionStatus = document.getElementById('connectionStatus');
-		if (connectionForm) connectionForm.classList.add('hidden');
-		if (connectionStatus) connectionStatus.classList.remove('hidden');
-		
-		const connectedUrl = document.getElementById('connectedUrl');
-		const connectedUser = document.getElementById('connectedUser');
-		const connectedProject = document.getElementById('connectedProject');
-		if (connectedUrl) connectedUrl.textContent = message.url || '';
-		if (connectedUser) connectedUser.textContent = message.username || '';
-		if (connectedProject) connectedProject.textContent = message.project || '';
-	}
-	
-	function showConnectionForm() {
-		const connectionForm = document.getElementById('connectionForm');
-		const connectionStatus = document.getElementById('connectionStatus');
-		if (connectionForm) connectionForm.classList.remove('hidden');
-		if (connectionStatus) connectionStatus.classList.add('hidden');
-		setLoadingState(false);
-	}
-	
-	function setLoadingState(loading) {
-		const connectBtn = document.getElementById('connectBtn');
-		if (connectBtn) {
-			connectBtn.textContent = loading ? 'Connecting...' : 'Connect to WebDAV';
-			connectBtn.disabled = loading;
-		}
-		const connectionForm = document.querySelector('.connection-form');
-		if (connectionForm) {
-			if (loading) {
-				connectionForm.classList.add('loading');
-			} else {
-				connectionForm.classList.remove('loading');
-			}
-		}
-	}
-	
-	function showError(message) {
-		const urlError = document.getElementById('urlError');
-		if (urlError) {
-			urlError.textContent = message;
-			urlError.classList.remove('hidden');
-		}
-	}
-	
-	function hideError() {
-		const urlError = document.getElementById('urlError');
-		if (urlError) {
-			urlError.classList.add('hidden');
-		}
-	}
-	
-	// Initialize when DOM is ready
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', setupEventHandlers);
-	} else {
-		setupEventHandlers();
-	}
-})();
-</script>`;
-	}
 
 	private updateWebview() {
 		if (this._view) {
@@ -481,12 +150,15 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				// Restore connection state
 				this.credentials = storedCredentials;
 				this.connected = true;
-				this.fsProvider = new WebDAVFileSystemProvider(this.credentials);
+				this.fsProvider = new WebDAVFileSystemProvider(this.credentials, this.globalContext);
 				
 				// Set dependencies for filesystem provider
 				this.fsProvider.setDebugLogger(this.debugLog);
 				this.fsProvider.setFileIndex(this.globalFileIndex);
 				this.fsProvider.setDebugOutput(this.debugOutput);
+				
+				// Initialize cache warming and file system
+				await this.fsProvider.initialize();
 
 				// Set the real provider in the placeholder
 				if (this.globalPlaceholderProvider) {
@@ -502,6 +174,11 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				if (this.globalTextSearchProvider) {
 					this.globalTextSearchProvider.setCredentials(this.credentials);
 					this.debugLog('Credentials set for text search provider during auto-reconnect');
+				}
+				if (this.globalPhpDefinitionProvider) {
+					this.globalPhpDefinitionProvider.setCredentials(this.credentials);
+					this.globalPhpDefinitionProvider.setFileSystemProvider(this.fsProvider);
+					this.debugLog('Credentials and file system provider set for PHP definition provider during auto-reconnect');
 				}
 				if (this.globalFileIndex) {
 					this.globalFileIndex.setCredentials(this.credentials);
@@ -529,7 +206,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 
 				// Show a subtle notification
 				vscode.window.showInformationMessage(
-					`Auto-connected to WebDAV: ${storedCredentials.project}`,
+					`Auto-connected to edoc Automate: ${storedCredentials.project}`,
 					'Hide'
 				);
 
@@ -595,12 +272,15 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			
 			this.debugLog('Creating filesystem provider...');
 			// Create filesystem provider
-			this.fsProvider = new WebDAVFileSystemProvider(this.credentials);
+			this.fsProvider = new WebDAVFileSystemProvider(this.credentials, this.globalContext);
 			
 			// Set dependencies for filesystem provider
 			this.fsProvider.setDebugLogger(this.debugLog);
 			this.fsProvider.setFileIndex(this.globalFileIndex);
 			this.fsProvider.setDebugOutput(this.debugOutput);
+			
+			// Initialize cache warming and file system
+			await this.fsProvider.initialize();
 			
 			this.debugLog('FileSystemProvider created', { baseUrl, project: finalProject });
 			
@@ -618,6 +298,11 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			if (this.globalTextSearchProvider) {
 				this.globalTextSearchProvider.setCredentials(this.credentials);
 				this.debugLog('Credentials set for text search provider');
+			}
+			if (this.globalPhpDefinitionProvider) {
+				this.globalPhpDefinitionProvider.setCredentials(this.credentials);
+				this.globalPhpDefinitionProvider.setFileSystemProvider(this.fsProvider);
+				this.debugLog('Credentials and file system provider set for PHP definition provider');
 			}
 			if (this.globalFileIndex) {
 				this.globalFileIndex.setCredentials(this.credentials);
@@ -642,7 +327,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			this.updateWebview();
 			this.debugLog('Webview updated successfully');
 			
-			vscode.window.showInformationMessage(`Connected to WebDAV server: ${baseUrl} (Project: ${finalProject})`);
+			vscode.window.showInformationMessage(`Connected to edoc Automate server: ${baseUrl} (Project: ${finalProject})`);
 			this.debugOutput.show();
 			
 			return this.fsProvider;
@@ -678,7 +363,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		}
 		
 		this.updateWebview();
-		vscode.window.showInformationMessage('Disconnected from WebDAV server');
+		vscode.window.showInformationMessage('Disconnected from edoc Automate server');
 		this.clearStoredCredentials();
 	}
 
@@ -730,7 +415,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				
 				this.updateWebview();
 				
-				vscode.window.showInformationMessage(`Reconnected to WebDAV server: ${storedCredentials.url} (Project: ${storedCredentials.project})`);
+				vscode.window.showInformationMessage(`Reconnected to edoc Automate server: ${storedCredentials.url} (Project: ${storedCredentials.project})`);
 				this.debugLog('Connection restored successfully', { url: storedCredentials.url, project: storedCredentials.project });
 				return this.fsProvider;
 			} else {
@@ -836,7 +521,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 
 	async openFiles() {
 		if (!this.fsProvider || !this.credentials?.project) {
-			vscode.window.showErrorMessage('Not connected to WebDAV server');
+			vscode.window.showErrorMessage('Not connected to edoc Automate server');
 			return;
 		}
 
@@ -869,16 +554,16 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		
 		if (success) {
 			this.debugLog('Workspace folder added successfully');
-			vscode.window.showInformationMessage(`WebDAV project "${this.credentials.project}" added to workspace`);
+			vscode.window.showInformationMessage(`edoc Automate project "${this.credentials.project}" added to workspace`);
 			
 			// Don't update webview after adding to workspace to prevent reset
 			// The connection should remain intact
 			this.debugLog('Preserving connection state after workspace addition');
 			
-			// Index all files to make them searchable
-			if (this.fsProvider) {
+			// Start file indexing to make them searchable
+			if (this.fsProvider && this.fsProvider.getFileIndex()) {
 				setTimeout(async () => {
-					await this.fsProvider!.indexAllFiles();
+					await this.fsProvider!.getFileIndex()?.quickIndex();
 					this.debugLog('Files indexed after workspace addition');
 				}, 1000);
 			}
@@ -896,7 +581,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
 		} else {
 			this.debugLog('Failed to add workspace folder');
-			vscode.window.showErrorMessage('Failed to add WebDAV folder to workspace');
+			vscode.window.showErrorMessage('Failed to add edoc Automate folder to workspace');
 		}
 	}
 
@@ -915,7 +600,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 
 	private async validateCredentials(credentials: WebDAVCredentials): Promise<boolean> {
 		try {
-			this.debugLog('Testing WebDAV connection', { url: credentials.url, project: credentials.project });
+			this.debugLog('Testing edoc Automate connection', { url: credentials.url, project: credentials.project });
 			
 			// Test connection by attempting to list the project root directory
 			const testURL = `${credentials.url}/apps/remote/${credentials.project}/`;
@@ -925,7 +610,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				headers: {
 					'Authorization': `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`,
 					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-					'User-Agent': 'VSCode-WebDAV-Extension'
+					'User-Agent': 'VSCode-edoc-Automate-Extension'
 				},
 				mode: 'cors',
 				credentials: 'include'

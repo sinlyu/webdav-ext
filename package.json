@@ -1,7 +1,7 @@
 {
   "name": "automate-webdav",
-  "displayName": "WebDAV Extension",
-  "description": "Lightning-fast WebDAV integration for VS Code with intelligent search and file indexing",
+  "displayName": "edoc Automate WebDAV",
+  "description": "Professional WebDAV integration for edoc Automate development with intelligent search, file indexing, and PHP IntelliSense",
   "version": "0.1.0",
   "publisher": "Sinlyu",
   "engines": {
@@ -23,13 +23,15 @@
     "SCM Providers"
   ],
   "keywords": [
+    "edoc",
+    "automate",
     "webdav",
+    "php",
+    "intellisense",
+    "remote development",
     "file system",
     "search",
-    "indexing",
-    "performance",
-    "remote files",
-    "cloud storage"
+    "indexing"
   ],
   "homepage": "https://github.com/Sinlyu/automate-webdav#readme",
   "bugs": {
@@ -51,12 +53,12 @@
       }
     ],
     "configuration": {
-      "title": "WebDAV Extension",
+      "title": "edoc Automate WebDAV",
       "properties": {
         "webdav.includeStubs": {
           "type": "boolean",
           "default": true,
-          "description": "Include plugin API stubs for autocompletion"
+          "description": "Include edoc Automate plugin API stubs for enhanced autocompletion"
         },
         "php.suggest.basic": {
           "type": "boolean",
@@ -83,8 +85,8 @@
       "activitybar": [
         {
           "id": "webdav",
-          "title": "WebDAV",
-          "icon": "$(cloud)"
+          "title": "edoc Automate",
+          "icon": "$(server-environment)"
         }
       ]
     },
@@ -92,7 +94,7 @@
       "webdav": [
         {
           "id": "webdavConnection",
-          "name": "Connection",
+          "name": "Server Connection",
           "type": "webview",
           "when": "true"
         }
@@ -101,20 +103,20 @@
     "commands": [
       {
         "command": "automate-webdav.showDebug",
-        "title": "Show WebDAV Debug Output"
+        "title": "Show edoc Automate Debug Output"
       },
       {
         "command": "automate-webdav.refreshWorkspace",
-        "title": "Refresh WebDAV Workspace",
+        "title": "Refresh edoc Automate Workspace",
         "icon": "$(refresh)"
       },
       {
         "command": "automate-webdav.addStubFile",
-        "title": "Add PHP Plugin API Stub File to Workspace"
+        "title": "Add edoc Automate PHP Plugin API Stubs"
       },
       {
         "command": "automate-webdav.setupPhpStubs",
-        "title": "Setup PHP Stubs Configuration"
+        "title": "Setup edoc Automate PHP Stubs"
       },
       {
         "command": "automate-webdav.testVirtualFile",
@@ -155,5 +157,8 @@
     "typescript": "^5.8.3",
     "webpack": "^5.99.7",
     "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "php-parser": "^3.2.4"
   }
 }

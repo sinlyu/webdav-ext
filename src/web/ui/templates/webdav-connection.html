@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>eDoc Automate Connection</title>
+	<style>
+		body {
+			font-family: var(--vscode-font-family);
+			font-size: var(--vscode-font-size);
+			background-color: var(--vscode-sideBar-background);
+			color: var(--vscode-sideBar-foreground);
+			margin: 0;
+			padding: 20px;
+			line-height: 1.5;
+		}
+		.container { 
+			max-width: 100%; 
+			min-height: 100vh;
+			display: flex;
+			flex-direction: column;
+			gap: 16px;
+		}
+		.form-group { 
+			margin-bottom: 20px;
+			position: relative;
+		}
+		h3 {
+			color: var(--vscode-editor-foreground);
+			margin-top: 0;
+			margin-bottom: 24px;
+			font-size: 18px;
+			font-weight: 600;
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.brand-icon {
+			width: 20px;
+			height: 20px;
+			background: linear-gradient(45deg, #007ACC, #0099CC);
+			border-radius: 3px;
+			display: inline-block;
+			position: relative;
+		}
+		.brand-icon::after {
+			content: '';
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			width: 12px;
+			height: 12px;
+			background: white;
+			border-radius: 2px;
+			opacity: 0.9;
+		}
+		label {
+			display: block;
+			margin-bottom: 6px;
+			font-weight: 600;
+			color: var(--vscode-input-foreground);
+			font-size: 13px;
+			letter-spacing: 0.3px;
+		}
+		input {
+			width: 100%;
+			padding: 10px 12px;
+			border: 1px solid var(--vscode-input-border);
+			background-color: var(--vscode-input-background);
+			color: var(--vscode-input-foreground);
+			border-radius: 6px;
+			font-size: 13px;
+			box-sizing: border-box;
+			transition: all 0.2s ease;
+		}
+		input:focus {
+			outline: none;
+			border-color: var(--vscode-focusBorder);
+			box-shadow: 0 0 0 2px var(--vscode-focusBorder);
+			transform: translateY(-1px);
+		}
+		.btn {
+			background-color: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+			border: none;
+			padding: 12px 20px;
+			border-radius: 6px;
+			cursor: pointer;
+			font-size: 13px;
+			font-weight: 600;
+			width: 100%;
+			margin-top: 12px;
+			transition: all 0.2s ease;
+			position: relative;
+			overflow: hidden;
+		}
+		.btn:hover { 
+			background-color: var(--vscode-button-hoverBackground);
+			transform: translateY(-1px);
+			box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+		}
+		.btn:disabled {
+			background-color: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			cursor: not-allowed;
+			transform: none;
+			box-shadow: none;
+			opacity: 0.6;
+		}
+		.btn-secondary {
+			background-color: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			border: 1px solid var(--vscode-button-border, transparent);
+		}
+		.btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
+		.status-card {
+			background-color: var(--vscode-editorWidget-background);
+			border: 1px solid var(--vscode-editorWidget-border);
+			border-radius: 8px;
+			padding: 20px;
+			margin-bottom: 20px;
+			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+			position: relative;
+			overflow: hidden;
+		}
+		.status-card::before {
+			content: '';
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 4px;
+			height: 100%;
+			background: linear-gradient(45deg, #007ACC, #0099CC);
+		}
+		.status-title {
+			font-weight: 600;
+			margin-bottom: 12px;
+			color: var(--vscode-editor-foreground);
+			font-size: 15px;
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.status-item {
+			display: flex;
+			justify-content: space-between;
+			margin-bottom: 8px;
+			font-size: 13px;
+			padding: 4px 0;
+			border-bottom: 1px solid var(--vscode-widget-border, transparent);
+		}
+		.status-item:last-child {
+			border-bottom: none;
+			margin-bottom: 0;
+		}
+		.status-label { color: var(--vscode-descriptionForeground); }
+		.status-value {
+			color: var(--vscode-editor-foreground);
+			font-weight: 500;
+		}
+		.success-indicator {
+			color: var(--vscode-testing-iconPassed);
+			font-weight: 600;
+			font-size: 16px;
+		}
+		.hidden { display: none; }
+		.error {
+			color: var(--vscode-errorForeground);
+			font-size: 12px;
+			margin-top: 6px;
+			padding: 8px 12px;
+			background-color: var(--vscode-inputValidation-errorBackground);
+			border-radius: 4px;
+			border-left: 3px solid var(--vscode-errorForeground);
+		}
+		.loading {
+			opacity: 0.6;
+			pointer-events: none;
+			position: relative;
+		}
+		.loading::after {
+			content: '';
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			width: 20px;
+			height: 20px;
+			border: 2px solid var(--vscode-progressBar-background);
+			border-top: 2px solid var(--vscode-button-background);
+			border-radius: 50%;
+			animation: spin 1s linear infinite;
+		}
+		@keyframes spin {
+			0% { transform: translate(-50%, -50%) rotate(0deg); }
+			100% { transform: translate(-50%, -50%) rotate(360deg); }
+		}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div id="connectionForm" class="connection-form">
+			<h3><span class="brand-icon"></span>edoc Automate Connection</h3>
+			<form id="webdavForm">
+				<div class="form-group">
+					<label for="url">edoc Automate Server URL</label>
+					<input type="url" id="url" placeholder="https://edoc-platform-server.com/apps/remote/project" required>
+					<div id="urlError" class="error hidden"></div>
+				</div>
+				<div class="form-group">
+					<label for="username">Username</label>
+					<input type="text" id="username" placeholder="Enter username" required>
+				</div>
+				<div class="form-group">
+					<label for="password">Password</label>
+					<input type="password" id="password" placeholder="Enter password" required>
+				</div>
+				<div class="form-group">
+					<label for="project">Project Name</label>
+					<input type="text" id="project" placeholder="Auto-detected or manual entry">
+					<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 6px; padding: 6px 8px; background-color: var(--vscode-editorHoverWidget-background); border-radius: 4px; border-left: 3px solid var(--vscode-textLink-foreground);">
+						<span style="display: inline-block; width: 12px; height: 12px; background-color: var(--vscode-textLink-foreground); border-radius: 50%; margin-right: 6px; position: relative;">
+							<span style="position: absolute; top: 51%; left: 50%; transform: translate(-50%, -50%); color: var(--vscode-editor-background); font-size: 8px; font-weight: bold;">i</span>
+						</span>
+						Project name will be auto-extracted from URL if available
+					</div>
+				</div>
+				<button type="submit" class="btn" id="connectBtn">Connect to edoc Automate</button>
+			</form>
+		</div>
+		<div id="connectionStatus" class="hidden">
+			<div class="status-card">
+				<div class="status-title">
+					<span class="success-indicator">✓</span> Connected to edoc Automate
+				</div>
+				<div class="status-item">
+					<span class="status-label">Server:</span>
+					<span class="status-value" id="connectedUrl"></span>
+				</div>
+				<div class="status-item">
+					<span class="status-label">User:</span>
+					<span class="status-value" id="connectedUser"></span>
+				</div>
+				<div class="status-item">
+					<span class="status-label">Project:</span>
+					<span class="status-value" id="connectedProject"></span>
+				</div>
+			</div>
+			<button class="btn" id="addWorkspaceBtn">Add to Workspace</button>
+			<button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
+		</div>
+	</div>
+</body>
+</html>
