@@ -4,6 +4,8 @@ All notable changes to the "edoc Automate WebDAV" extension will be documented i
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-01-05
+
 ### 🚀 PHP Development Features
 - **📝 PHP IntelliSense & Type Definitions**: Enhanced development experience
   - Added comprehensive PHP definition provider with AST parsing support
