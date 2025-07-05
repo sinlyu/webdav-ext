@@ -1,120 +1,14 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { WebDAVCredentials } from './types';
 import { WebDAVFileSearchProvider } from './providers/fileSearchProvider';
 import { WebDAVTextSearchProvider } from './providers/textSearchProvider';
 import { WebDAVFileIndex } from './core/fileIndex';
-import { WebDAVFileSystemProvider } from './providers/webdavFileSystemProvider';
 import { WebDAVViewProvider } from './ui/webdavViewProvider';
+import { PlaceholderFileSystemProvider } from './providers/fileSystemProvider';
+import { createDebugLogger } from './utils/logging';
 
 
 
-class PlaceholderFileSystemProvider implements vscode.FileSystemProvider {
-	private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
-	private _realProvider: WebDAVFileSystemProvider | null = null;
-
-	readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> = this._emitter.event;
-
-	setRealProvider(provider: WebDAVFileSystemProvider | null) {
-		this._realProvider = provider;
-		debugLog('PlaceholderProvider: Real provider set', { hasProvider: !!provider });
-	}
-
-	getRealProvider(): WebDAVFileSystemProvider | null {
-		return this._realProvider;
-	}
-
-	watch(uri: vscode.Uri, options: { recursive: boolean; excludes: string[]; }): vscode.Disposable {
-		if (this._realProvider) {
-			return this._realProvider.watch(uri, options);
-		}
-		return new vscode.Disposable(() => {});
-	}
-
-	async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-		// Handle malformed URIs with extra leading slash
-		let correctedUri = uri;
-		if (uri.toString().startsWith('/webdav:')) {
-			// Fix malformed URI by removing leading slash
-			const correctedUriString = uri.toString().substring(1);
-			correctedUri = vscode.Uri.parse(correctedUriString);
-			debugLog('Fixed malformed URI with leading slash', {
-				original: uri.toString(),
-				corrected: correctedUri.toString()
-			});
-		}
-		
-		if (this._realProvider) {
-			return this._realProvider.stat(correctedUri);
-		}
-		debugLog('PlaceholderProvider: stat() called but not connected', { uri: correctedUri.toString() });
-		const errorMsg = `No file system handle registered (${correctedUri.scheme}://)`;
-		throw vscode.FileSystemError.Unavailable(errorMsg);
-	}
-
-	async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
-		if (this._realProvider) {
-			return this._realProvider.readDirectory(uri);
-		}
-		debugLog('PlaceholderProvider: readDirectory() called but not connected', { uri: uri.toString() });
-		const errorMsg = `No file system handle registered (${uri.scheme}://)`;
-		throw vscode.FileSystemError.Unavailable(errorMsg);
-	}
-
-	async createDirectory(uri: vscode.Uri): Promise<void> {
-		if (this._realProvider) {
-			return this._realProvider.createDirectory(uri);
-		}
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
-	}
-
-	async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-		// Handle malformed URIs with extra leading slash
-		let correctedUri = uri;
-		if (uri.toString().startsWith('/webdav:')) {
-			// Fix malformed URI by removing leading slash
-			const correctedUriString = uri.toString().substring(1);
-			correctedUri = vscode.Uri.parse(correctedUriString);
-			debugLog('Fixed malformed URI with leading slash', {
-				original: uri.toString(),
-				corrected: correctedUri.toString()
-			});
-		}
-		
-		if (this._realProvider) {
-			return this._realProvider.readFile(correctedUri);
-		}
-		debugLog('PlaceholderProvider: readFile() called but not connected', { uri: correctedUri.toString() });
-		const errorMsg = `No file system handle registered (${correctedUri.scheme}://)`;
-		throw vscode.FileSystemError.Unavailable(errorMsg);
-	}
-
-	async writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean; }): Promise<void> {
-		if (this._realProvider) {
-			return this._realProvider.writeFile(uri, content, options);
-		}
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
-	}
-
-	async delete(uri: vscode.Uri, options: { recursive: boolean; }): Promise<void> {
-		if (this._realProvider) {
-			return this._realProvider.delete(uri, options);
-		}
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
-	}
-
-	async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean; }): Promise<void> {
-		if (this._realProvider) {
-			return this._realProvider.rename(oldUri, newUri, options);
-		}
-		throw vscode.FileSystemError.Unavailable('Not connected to WebDAV server');
-	}
-}
-
-
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+// Extension global variables
 let debugOutput: vscode.OutputChannel;
 let globalPlaceholderProvider: PlaceholderFileSystemProvider;
 let globalContext: vscode.ExtensionContext;
@@ -122,19 +16,15 @@ let globalFileSearchProvider: WebDAVFileSearchProvider;
 let globalTextSearchProvider: WebDAVTextSearchProvider;
 let globalFileIndex: WebDAVFileIndex;
 let globalStubFileCreator: (() => Promise<void>) | null = null;
-
-function debugLog(message: string, data?: any) {
-	const timestamp = new Date().toISOString();
-	const dataStr = data ? ` - ${JSON.stringify(data)}` : '';
-	debugOutput.appendLine(`[${timestamp}] ${message}${dataStr}`);
-}
+let debugLog: (message: string, data?: any) => void;
 
 export function activate(context: vscode.ExtensionContext) {
 	// Store context globally for persistence
 	globalContext = context;
 	
-	// Create debug output channel
+	// Create debug output channel and logger
 	debugOutput = vscode.window.createOutputChannel('WebDAV Debug');
+	debugLog = createDebugLogger(debugOutput);
 	context.subscriptions.push(debugOutput);
 	
 	const timestamp = new Date().toISOString();
@@ -146,7 +36,7 @@ export function activate(context: vscode.ExtensionContext) {
 	console.log('WebDAV extension activated at', timestamp);
 
 	// Register a placeholder filesystem provider immediately
-	globalPlaceholderProvider = new PlaceholderFileSystemProvider();
+	globalPlaceholderProvider = new PlaceholderFileSystemProvider(debugLog);
 	const providerRegistration = vscode.workspace.registerFileSystemProvider('webdav', globalPlaceholderProvider, { 
 		isCaseSensitive: false,
 		isReadonly: false
