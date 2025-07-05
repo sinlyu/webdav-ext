@@ -134,12 +134,15 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		// Debug: Check for path format issues
 		this._debugLog('Virtual file not found in stat()', { path, virtualFiles: this._virtualFiles.size });
 
-		// Try alternative path formats
+		// Try alternative path formats including ~ prefix for virtual files
 		const alternativePaths = [
-			`~${path}`,                    // Add ~ prefix
+			`~${path}`,                    // Add ~ prefix (for virtual files)
 			path.substring(1),             // Remove leading slash
 			path.replace(/^\/+/, '/'),     // Normalize multiple slashes
-		];
+			// Special handling for .stubs and .vscode virtual directories
+			path.startsWith('/.stubs') ? `~${path}` : null,
+			path.startsWith('/.vscode') ? `~${path}` : null,
+		].filter(Boolean) as string[];
 
 		for (const altPath of alternativePaths) {
 			const altFile = this._virtualFiles.get(altPath);
@@ -301,12 +304,15 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			}
 		});
 
-		// Try alternative path formats that might work
+		// Try alternative path formats including ~ prefix for virtual files
 		const alternativePaths = [
-			`~${path}`,                    // Add ~ prefix
+			`~${path}`,                    // Add ~ prefix (for virtual files)
 			path.substring(1),             // Remove leading slash
 			path.replace(/^\/+/, '/'),     // Normalize multiple slashes
-		];
+			// Special handling for .stubs and .vscode virtual directories
+			path.startsWith('/.stubs') ? `~${path}` : null,
+			path.startsWith('/.vscode') ? `~${path}` : null,
+		].filter(Boolean) as string[];
 
 		for (const altPath of alternativePaths) {
 			const altFile = this._virtualFiles.get(altPath);
@@ -411,9 +417,22 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	}
 
 	private getParentPath(path: string): string {
-		const parts = path.split('/');
+		// Handle ~ prefix for virtual files
+		let normalizedPath = path;
+		if (path.startsWith('~/')) {
+			normalizedPath = path.substring(1); // Remove ~ but keep the /
+		}
+		
+		const parts = normalizedPath.split('/');
 		parts.pop();
-		return parts.join('/').substring(1); // Remove leading slash
+		let parentPath = parts.join('/');
+		
+		// Remove leading slash for consistency with directory listing paths
+		if (parentPath.startsWith('/')) {
+			parentPath = parentPath.substring(1);
+		}
+		
+		return parentPath;
 	}
 
 	private async getDirectoryListing(dirPath: string): Promise<WebDAVFileItem[]> {
@@ -633,8 +652,19 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 
 	// Helper method to create consistent webdav URIs
 	private createWebdavUri(path: string): vscode.Uri {
+		// Handle ~ prefix for virtual files - convert to regular path
+		let normalizedPath = path;
+		if (path.startsWith('~/')) {
+			normalizedPath = path.substring(1); // Remove ~ but keep the /
+		} else if (path.startsWith('~')) {
+			normalizedPath = path.substring(1); // Remove ~ completely
+		}
+		
 		// Ensure path starts with /
-		const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+		if (!normalizedPath.startsWith('/')) {
+			normalizedPath = `/${normalizedPath}`;
+		}
+		
 		const uri = vscode.Uri.parse(`webdav:${normalizedPath}`);
 		this._debugLog('Created webdav URI', { 
 			inputPath: path,
