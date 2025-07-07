@@ -8,14 +8,14 @@
   "engines": {
     "vscode": "^1.101.0"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Sinlyu/automate-webdav.git"
-  },
   "enabledApiProposals": [
     "fileSearchProvider",
     "textSearchProvider"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sinlyu/automate-webdav.git"
+  },
   "extensionDependencies": [
     "devsense.phptools-vscode"
   ],

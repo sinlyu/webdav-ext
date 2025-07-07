@@ -34,6 +34,11 @@ All notable changes to the "edoc Automate WebDAV" extension will be documented i
   - Better validation of cached directory entries to prevent empty cache issues
   - Optimized URL path building with proper cleaning and normalization
 
+- **🔧 Fixed API Proposals Registration**: Resolved extension loading error for web extensions
+  - Fixed "Extension CANNOT use API proposal: fileSearchProvider" error
+  - Corrected enabledApiProposals field position in package.json for proper VS Code recognition
+  - Ensures file and text search providers register correctly in web environments
+
 ### 🏗️ Technical Improvements
 - **URI Normalization**: Added `normalizeFilePathForUri()` method across all providers
 - **Path Consistency**: Unified path handling between virtual and real files
