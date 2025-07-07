@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { WebDAVFileSearchProvider } from './providers/fileSearchProvider';
 import { WebDAVTextSearchProvider } from './providers/textSearchProvider';
+import { WebDAVWorkspaceSymbolProvider } from './providers/workspaceSymbolProvider';
+import { WebDAVDocumentSymbolProvider } from './providers/documentSymbolProvider';
+import { WebDAVCustomSearchProvider } from './providers/customSearchProvider';
 import { PHPDefinitionProvider } from './providers/phpDefinitionProvider';
 import { PHPDefinitionProviderAST } from './providers/phpDefinitionProviderAST';
 import { IPHPDefinitionProvider } from './providers/phpDefinitionProviderInterface';
@@ -17,6 +20,9 @@ let globalPlaceholderProvider: PlaceholderFileSystemProvider;
 let globalContext: vscode.ExtensionContext;
 let globalFileSearchProvider: WebDAVFileSearchProvider;
 let globalTextSearchProvider: WebDAVTextSearchProvider;
+let globalWorkspaceSymbolProvider: WebDAVWorkspaceSymbolProvider;
+let globalDocumentSymbolProvider: WebDAVDocumentSymbolProvider;
+let globalCustomSearchProvider: WebDAVCustomSearchProvider;
 let globalPhpDefinitionProvider: IPHPDefinitionProvider;
 let globalFileIndex: WebDAVFileIndex;
 let globalStubFileCreator: (() => Promise<void>) | null = null;
@@ -107,9 +113,12 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 
-	// Initialize and register search providers
+	// Initialize search providers (both proposed and stable APIs)
 	globalFileSearchProvider = new WebDAVFileSearchProvider();
 	globalTextSearchProvider = new WebDAVTextSearchProvider();
+	globalWorkspaceSymbolProvider = new WebDAVWorkspaceSymbolProvider();
+	globalDocumentSymbolProvider = new WebDAVDocumentSymbolProvider();
+	globalCustomSearchProvider = new WebDAVCustomSearchProvider();
 	
 	// Choose PHP definition provider (AST-based is more accurate)
 	const useASTParser = vscode.workspace.getConfiguration('webdav').get('useASTParser', false);
@@ -123,20 +132,48 @@ export function activate(context: vscode.ExtensionContext) {
 	
 	globalFileIndex = new WebDAVFileIndex();
 	
-	// Set debug loggers for search providers and index
+	// Set debug loggers for all providers and index
 	globalFileSearchProvider.setDebugLogger(debugLog);
 	globalTextSearchProvider.setDebugLogger(debugLog);
+	globalWorkspaceSymbolProvider.setDebugLogger(debugLog);
+	globalDocumentSymbolProvider.setDebugLogger(debugLog);
+	globalCustomSearchProvider.setDebugLogger(debugLog);
 	globalPhpDefinitionProvider.setDebugLogger(debugLog);
 	globalFileIndex.setDebugLogger(debugLog);
 	
 	// Set callback to update PHP workspace.includePath when index is updated
 	globalFileIndex.setOnIndexUpdatedCallback(updatePhpWorkspaceIncludePath);
 	
-	// Set file index for search providers
+	// Set file index for all providers
 	globalFileSearchProvider.setFileIndex(globalFileIndex);
 	globalTextSearchProvider.setFileIndex(globalFileIndex);
+	globalWorkspaceSymbolProvider.setFileIndex(globalFileIndex);
+	globalCustomSearchProvider.setFileIndex(globalFileIndex);
 	globalPhpDefinitionProvider.setFileIndex(globalFileIndex);
 	
+	// Register stable API providers (always available)
+	try {
+		// Register WorkspaceSymbolProvider for Ctrl+T symbol search
+		context.subscriptions.push(
+			vscode.languages.registerWorkspaceSymbolProvider(globalWorkspaceSymbolProvider)
+		);
+		debugLog('Workspace symbol provider registered');
+
+		// Register DocumentSymbolProvider for outline view and Ctrl+Shift+O
+		context.subscriptions.push(
+			vscode.languages.registerDocumentSymbolProvider(
+				{ scheme: 'webdav' }, 
+				globalDocumentSymbolProvider
+			)
+		);
+		debugLog('Document symbol provider registered');
+	} catch (error: any) {
+		debugLog('Failed to register stable symbol providers', { error: error.message });
+	}
+
+	// DISABLED: Proposed API providers (require development mode)
+	// These are kept for future use when APIs are stabilized
+	/*
 	try {
 		// Try to register search providers using experimental API
 		if ((vscode.workspace as any).registerFileSearchProvider) {
@@ -155,6 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
 	} catch (error: any) {
 		debugLog('Failed to register search providers', { error: error.message });
 	}
+	*/
 
 	// Register PHP definition provider
 	try {
@@ -789,6 +827,21 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	const searchFilesCommand = vscode.commands.registerCommand('automate-webdav.searchFiles', async () => {
+		debugLog('Search files command triggered');
+		await globalCustomSearchProvider.showFileSearchQuickPick();
+	});
+
+	const searchTextCommand = vscode.commands.registerCommand('automate-webdav.searchText', async () => {
+		debugLog('Search text command triggered');
+		await globalCustomSearchProvider.showTextSearchQuickPick();
+	});
+
+	const searchSymbolsCommand = vscode.commands.registerCommand('automate-webdav.searchSymbols', async () => {
+		debugLog('Search symbols command triggered');
+		await globalCustomSearchProvider.showSymbolSearchQuickPick();
+	});
+
 	const debugFileSystemCommand = vscode.commands.registerCommand('automate-webdav.debugFileSystem', async () => {
 		debugLog('Debug file system command triggered');
 		
@@ -876,6 +929,9 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(setupPhpStubsCommand);
 	context.subscriptions.push(testVirtualFileCommand);
 	context.subscriptions.push(testGoToDefinitionCommand);
+	context.subscriptions.push(searchFilesCommand);
+	context.subscriptions.push(searchTextCommand);
+	context.subscriptions.push(searchSymbolsCommand);
 	context.subscriptions.push(debugFileSystemCommand);
 }
 
