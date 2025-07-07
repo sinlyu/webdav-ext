@@ -4,6 +4,73 @@ All notable changes to the "edoc Automate WebDAV" extension will be documented i
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-01-07
+
+### 🚀 Major Features
+- **✅ Stable API Implementation**: No more development mode required!
+  - **Replaced proposed APIs** with stable VS Code APIs - extension now works without `--enable-proposed-api` flag
+  - **WorkspaceSymbolProvider**: Enables **Ctrl+T** symbol search across entire WebDAV workspace
+  - **DocumentSymbolProvider**: Enables **Ctrl+Shift+O** document outline and breadcrumb navigation
+  - **CustomSearchProvider**: Comprehensive QuickPick search interface for files, text, and symbols
+  - **Removed dependency** on experimental `fileSearchProvider` and `textSearchProvider` APIs
+
+### 🔍 Enhanced Search Capabilities
+- **🎯 Symbol Search Integration**: Professional IDE-level navigation
+  - **Global Symbol Search** (**Ctrl+T**): Find PHP classes, functions, methods, constants across workspace
+  - **Document Outline** (**Ctrl+Shift+O**): Navigate within files with hierarchical symbol view
+  - **Multi-language Support**: PHP, JavaScript, TypeScript, JSON symbol extraction
+  - **Intelligent Symbol Detection**: Recognizes classes, interfaces, traits, methods, properties, constants
+  - **Real-time Filtering**: Live search results as you type
+
+- **📂 Advanced File Operations**: Comprehensive search commands
+  - **File Search Command**: `WebDAV: Search Files in Workspace` - Find files by name with fuzzy matching
+  - **Text Search Command**: `WebDAV: Search Text in Files` - Full-text search across WebDAV files  
+  - **Symbol Search Command**: `WebDAV: Search PHP Symbols` - Find specific PHP symbols with context
+  - **QuickPick Interface**: Modern VS Code native search UI with previews and navigation
+
+### 🏗️ Architecture Improvements
+- **📦 New Provider System**: Clean separation of concerns
+  - **WorkspaceSymbolProvider** (`workspaceSymbolProvider.ts`): Cross-workspace symbol indexing
+  - **DocumentSymbolProvider** (`documentSymbolProvider.ts`): Per-document symbol extraction with hierarchy
+  - **CustomSearchProvider** (`customSearchProvider.ts`): Fallback search UI with comprehensive functionality
+  - **Maintained Legacy Providers**: Proposed API providers kept for future use (commented out)
+
+### 🔧 Technical Enhancements  
+- **🚫 Removed Proposed API Dependencies**: Production-ready compatibility
+  - **Eliminated `enabledApiProposals`** from package.json - no special VS Code configuration needed
+  - **Graceful Provider Registration**: Stable APIs register successfully, proposed APIs safely disabled
+  - **Backward Compatible**: All existing functionality preserved through stable API alternatives
+  - **Future-Proof**: Legacy code maintained for easy re-enabling when APIs stabilize
+
+### 📝 Developer Experience
+- **🎮 New Commands Available**: Enhanced productivity tools
+  - `automate-webdav.searchFiles` - Interactive file search
+  - `automate-webdav.searchText` - Cross-file text search  
+  - `automate-webdav.searchSymbols` - PHP symbol finder
+  - All commands accessible via Command Palette (**Ctrl+Shift+P**)
+
+### 🐛 Bug Fixes
+- **🔗 TypeScript Compilation**: Resolved optional chaining issues
+  - Fixed `selected.description` possibly undefined error in CustomSearchProvider
+  - Enhanced type safety with proper null checking
+
+### 🔄 Breaking Changes
+- **Proposed API Removal**: Extensions using proposed APIs will need updates
+  - `fileSearchProvider` and `textSearchProvider` registration disabled
+  - Functionality maintained through stable API alternatives
+  - **Migration Path**: Use new search commands or enable development mode for proposed APIs
+
+### ⚡ Performance Improvements
+- **Optimized Symbol Extraction**: Faster PHP analysis
+- **Efficient File Indexing**: Reduced memory footprint for large workspaces
+- **Smart Caching**: Improved response times for repeated searches
+
+### 🎯 User Impact
+- **📱 Universal Compatibility**: Works in all VS Code environments
+  - VS Code Desktop, VS Code Server, GitHub Codespaces, vscode.dev
+  - No special configuration or flags required
+  - Consistent experience across all platforms
+
 ## [0.2.1] - 2025-01-07
 
 ### 🐛 Bug Fixes
