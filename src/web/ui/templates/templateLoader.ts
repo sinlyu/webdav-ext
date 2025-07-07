@@ -42,7 +42,6 @@ export class TemplateLoader {
       this.extensionUri, 
       'dist', 
       'web', 
-      'ui', 
       'templates', 
       fileName
     );
@@ -96,7 +95,6 @@ export class TemplateLoader {
       this.extensionUri,
       'dist',
       'web', 
-      'ui',
       'templates',
       resourcePath
     );

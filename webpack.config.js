@@ -61,6 +61,10 @@ const webExtensionConfig = {
 				{
 					from: 'resources',
 					to: 'resources'
+				},
+				{
+					from: 'src/web/ui/templates',
+					to: 'templates'
 				}
 			]
 		})

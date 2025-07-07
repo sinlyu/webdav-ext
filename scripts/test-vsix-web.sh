@@ -67,12 +67,17 @@ echo "5. Test virtual file system and go-to-definition"
 echo "6. Close the browser tab when testing is complete"
 echo ""
 
-# Start VS Code Web with the VSIX extension
+# Extract VSIX to temporary directory for web testing
+EXTRACT_DIR="$TEST_DIR/extension"
+mkdir -p "$EXTRACT_DIR"
+unzip -q "$VSIX_FILE" -d "$EXTRACT_DIR"
+
+# Start VS Code Web with the extracted extension
 vscode-test-web \
     --browserType=chromium \
     --browserOption=--disable-web-security \
     --browserOption=--disable-features=VizDisplayCompositor \
-    --extensionPath="$VSIX_FILE" \
+    --extensionDevelopmentPath="$EXTRACT_DIR" \
     "$TEST_DIR"
 
 print_success "Web testing session completed"

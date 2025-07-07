@@ -2,7 +2,7 @@
   "name": "automate-webdav",
   "displayName": "edoc Automate WebDAV",
   "description": "Professional WebDAV integration for edoc Automate development with intelligent search, file indexing, and PHP IntelliSense",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "Sinlyu",
   "icon": "resources/webdav_logo.png",
   "engines": {
