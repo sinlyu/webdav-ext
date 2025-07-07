@@ -137,6 +137,10 @@
     "watch-web": "webpack --watch",
     "package-web": "webpack --mode production --devtool hidden-source-map",
     "package-vscode-dev": "npm run package-web && vsce package --target web",
+    "test-vsix": "./scripts/test-vsix.sh",
+    "test-vsix-web": "./scripts/test-vsix-web.sh",
+    "test-vsix-simple": "npm run package-vscode-dev && code --install-extension $(ls automate-webdav-web-*.vsix | head -1) --force",
+    "uninstall-vsix": "code --uninstall-extension Sinlyu.automate-webdav",
     "lint": "eslint src",
     "run-in-browser": "vscode-test-web --browserType=chromium --browserOption=--disable-web-security --browserOption=--disable-features=VizDisplayCompositor --extensionDevelopmentPath=. ."
   },

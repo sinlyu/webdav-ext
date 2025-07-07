@@ -170,9 +170,73 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and feature updates.
 - Some edoc Automate servers may have specific authentication requirements
 - PHP IntelliSense requires PHP Tools extension for optimal experience
 
+## 🛠️ Development & Testing
+
+### Available Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run package-vscode-dev` | Build and package the extension into a VSIX file |
+| `npm run test-vsix` | **Install and test extension from VSIX** (Production testing) |
+| `npm run test-vsix-web` | **Test extension in VS Code Web from VSIX** (Browser testing) |
+| `npm run test-vsix-simple` | Simple VSIX install command without guided testing |
+| `npm run uninstall-vsix` | Uninstall the extension from VS Code |
+| `npm run lint` | Run ESLint on source code |
+| `npm run run-in-browser` | Run extension in development mode (browser) |
+
+### VSIX Testing Workflow
+
+For **production-like testing** of the packaged extension:
+
+```bash
+# Test the extension as end-users would install it
+npm run test-vsix
+
+# Test in web browser environment  
+npm run test-vsix-web
+
+# Clean up after testing
+npm run uninstall-vsix
+```
+
+### Testing Features
+
+**Desktop VS Code Testing (`npm run test-vsix`):**
+- ✅ Builds VSIX package automatically
+- ✅ Installs extension in VS Code (non-dev mode)
+- ✅ Verifies installation success
+- ✅ Provides testing checklist and next steps
+- ✅ Tests API proposal registration
+- ✅ Validates extension loading without dev mode
+
+**Web Browser Testing (`npm run test-vsix-web`):**
+- 🌐 Tests extension in VS Code Web environment
+- 🌐 Validates web extension compatibility
+- 🌐 Tests browser-specific functionality
+- 🌐 Verifies CORS and web security settings
+
+### Development Setup
+
+```bash
+# Install dependencies
+npm install
+
+# Build for development
+npm run compile-web
+
+# Package for production
+npm run package-vscode-dev
+
+# Test the packaged extension
+npm run test-vsix
+```
+
 ## 🤝 Contributing
 
 This extension is actively developed for edoc Automate development workflows. Please report issues or suggest features through the appropriate channels.
+
+### Testing Before Release
+Always run `npm run test-vsix` to verify the extension works correctly in production mode before releasing.
 
 ## 📜 License
 
