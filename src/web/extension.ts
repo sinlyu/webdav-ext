@@ -173,7 +173,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// DISABLED: Proposed API providers (require development mode)
 	// These are kept for future use when APIs are stabilized
-	/*
+
 	try {
 		// Try to register search providers using experimental API
 		if ((vscode.workspace as any).registerFileSearchProvider) {
@@ -192,7 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
 	} catch (error: any) {
 		debugLog('Failed to register search providers', { error: error.message });
 	}
-	*/
+	
 
 	// Register PHP definition provider
 	try {
