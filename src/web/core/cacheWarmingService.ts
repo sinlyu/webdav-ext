@@ -201,49 +201,53 @@ export class CacheWarmingService {
   }
 
   private async processWarmingQueue(): Promise<void> {
-    if (this.warmingQueue.length === 0 || 
-        this.activeWarming.size >= CacheWarmingService.MAX_CONCURRENT_REQUESTS) {
-      
-      if (this.warmingQueue.length > 0) {
-        // Schedule next processing
-        this.warmingTimer = setTimeout(() => {
-          this.processWarmingQueue();
-        }, CacheWarmingService.WARMING_DELAY_MS);
-      } else {
-        // No more paths to warm
-        this.isWarming = false;
-        this.debugLog('Background cache warming completed');
-      }
+    if (this.warmingQueue.length === 0) {
+      // No more paths to warm
+      this.isWarming = false;
+      this.debugLog('Background cache warming completed');
       return;
     }
 
-    // Process next batch
-    const batch = this.warmingQueue.splice(0, CacheWarmingService.WARMING_BATCH_SIZE);
-    
-    for (const path of batch) {
-      if (this.activeWarming.size < CacheWarmingService.MAX_CONCURRENT_REQUESTS) {
-        this.warmPath(path).finally(() => {
-          this.activeWarming.delete(path);
-        });
-      } else {
-        // Put back in queue
-        this.warmingQueue.unshift(path);
-        break;
-      }
+    // Calculate how many slots are available
+    const availableSlots = CacheWarmingService.MAX_CONCURRENT_REQUESTS - this.activeWarming.size;
+    if (availableSlots <= 0) {
+      // Wait for some operations to complete
+      this.warmingTimer = setTimeout(() => {
+        this.processWarmingQueue();
+      }, CacheWarmingService.WARMING_DELAY_MS);
+      return;
     }
 
-    // Schedule next processing
-    this.warmingTimer = setTimeout(() => {
-      this.processWarmingQueue();
-    }, CacheWarmingService.WARMING_DELAY_MS);
+    // Process batch efficiently - take only what we can handle
+    const batchSize = Math.min(availableSlots, CacheWarmingService.WARMING_BATCH_SIZE);
+    const batch = this.warmingQueue.splice(0, batchSize);
+    
+    // Start all warming operations in parallel
+    const warmingPromises = batch.map(path => {
+      this.activeWarming.add(path);
+      return this.warmPath(path).finally(() => {
+        this.activeWarming.delete(path);
+      });
+    });
+
+    // Continue processing when operations complete
+    Promise.allSettled(warmingPromises).then(() => {
+      if (this.warmingQueue.length > 0) {
+        // Immediately process next batch if queue has items
+        setImmediate(() => this.processWarmingQueue());
+      }
+    });
+
+    // Also schedule next processing as backup
+    if (this.warmingQueue.length > 0) {
+      this.warmingTimer = setTimeout(() => {
+        this.processWarmingQueue();
+      }, CacheWarmingService.WARMING_DELAY_MS);
+    }
   }
 
   private async warmPath(path: string): Promise<void> {
-    if (this.activeWarming.has(path)) {
-      return;
-    }
-
-    this.activeWarming.add(path);
+    // Note: activeWarming.add() is called by the caller
     
     try {
       // Check if path is already cached

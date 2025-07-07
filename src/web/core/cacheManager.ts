@@ -46,10 +46,13 @@ export class CacheManager {
 
   private memoryCache = new Map<string, CacheEntry>();
   private directoryCache = new Map<string, DirectoryCache>();
-  private accessOrder: string[] = [];
+  private accessOrderMap = new Map<string, { prev?: string; next?: string }>();
+  private lruHead?: string;
+  private lruTail?: string;
   private currentCacheSize = 0;
   private cleanupTimer?: NodeJS.Timeout;
   private debugLog: (message: string, data?: any) => void;
+  private cacheOperationLock = new Set<string>(); // Prevent concurrent operations on same key
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -75,7 +78,7 @@ export class CacheManager {
     // Check if cache entry is expired
     if (Date.now() > entry.expires) {
       this.memoryCache.delete(key);
-      this.removeFromAccessOrder(key);
+      this.removeFromLRU(key);
       return null;
     }
 
@@ -98,33 +101,56 @@ export class CacheManager {
     contentType?: string;
   }): Promise<void> {
     const key = this.getCacheKey(path);
-    const ttl = this.getTTL(path);
     
-    const entry: CacheEntry = {
-      content,
-      metadata: {
-        ...metadata,
-        lastAccessed: Date.now(),
-        accessCount: 1
-      },
-      expires: Date.now() + ttl
-    };
-
-    // Check if we need to evict entries
-    const entrySize = content.length;
-    while (this.shouldEvict(entrySize)) {
-      this.evictLRU();
+    // Prevent concurrent operations on the same key
+    if (this.cacheOperationLock.has(key)) {
+      return;
     }
+    
+    this.cacheOperationLock.add(key);
+    
+    try {
+      const ttl = this.getTTL(path);
+      const entrySize = content.length;
+      
+      // Get existing entry to calculate size difference
+      const existingEntry = this.memoryCache.get(key);
+      const existingSize = existingEntry ? existingEntry.content.length : 0;
+      const sizeDelta = entrySize - existingSize;
+      
+      const entry: CacheEntry = {
+        content,
+        metadata: {
+          ...metadata,
+          lastAccessed: Date.now(),
+          accessCount: existingEntry ? existingEntry.metadata.accessCount + 1 : 1
+        },
+        expires: Date.now() + ttl
+      };
 
-    this.memoryCache.set(key, entry);
-    this.currentCacheSize += entrySize;
-    this.updateAccessOrder(key);
+      // Atomic eviction and size tracking
+      while (this.shouldEvict(sizeDelta)) {
+        if (!this.evictLRU()) {
+          // Cannot evict any more entries
+          break;
+        }
+      }
 
-    this.debugLog('Cached file', { path, size: entrySize, totalSize: this.currentCacheSize });
+      // Atomic update: size, cache, and access order
+      this.memoryCache.set(key, entry);
+      this.currentCacheSize += sizeDelta;
+      this.updateAccessOrder(key);
 
-    // Store in persistent cache for frequently accessed files
-    if (entry.metadata.accessCount > 2 || this.isImportantFile(path)) {
-      this.saveToPersistentCache(key, entry);
+      this.debugLog('Cached file', { path, size: entrySize, totalSize: this.currentCacheSize });
+
+      // Store in persistent cache for frequently accessed files
+      if (entry.metadata.accessCount > 2 || this.isImportantFile(path)) {
+        this.saveToPersistentCache(key, entry).catch(error => {
+          this.debugLog('Failed to save to persistent cache', { error, path });
+        });
+      }
+    } finally {
+      this.cacheOperationLock.delete(key);
     }
   }
 
@@ -171,15 +197,27 @@ export class CacheManager {
    */
   async deleteFile(path: string): Promise<void> {
     const key = this.getCacheKey(path);
-    const entry = this.memoryCache.get(key);
     
-    if (entry) {
-      this.currentCacheSize -= entry.content.length;
-      this.memoryCache.delete(key);
-      this.removeFromAccessOrder(key);
-      this.debugLog('Deleted file from cache', { path, size: entry.content.length });
-    } else {
-      this.debugLog('File not found in cache for deletion', { path });
+    // Prevent concurrent operations
+    if (this.cacheOperationLock.has(key)) {
+      return;
+    }
+    
+    this.cacheOperationLock.add(key);
+    
+    try {
+      const entry = this.memoryCache.get(key);
+      
+      if (entry) {
+        this.currentCacheSize -= entry.content.length;
+        this.memoryCache.delete(key);
+        this.removeFromLRU(key);
+        this.debugLog('Deleted file from cache', { path, size: entry.content.length });
+      } else {
+        this.debugLog('File not found in cache for deletion', { path });
+      }
+    } finally {
+      this.cacheOperationLock.delete(key);
     }
   }
 
@@ -212,7 +250,7 @@ export class CacheManager {
       if (key.startsWith(baseKey)) {
         freedSize += entry.content.length;
         this.memoryCache.delete(key);
-        this.removeFromAccessOrder(key);
+        this.removeFromLRU(key);
         deletedFiles++;
       }
     }
@@ -268,8 +306,11 @@ export class CacheManager {
   async clearCache(): Promise<void> {
     this.memoryCache.clear();
     this.directoryCache.clear();
-    this.accessOrder = [];
+    this.accessOrderMap.clear();
+    this.lruHead = undefined;
+    this.lruTail = undefined;
     this.currentCacheSize = 0;
+    this.cacheOperationLock.clear();
     
     await this.clearPersistentCache();
     this.debugLog('Cache cleared');
@@ -286,9 +327,32 @@ export class CacheManager {
   }
 
   private getCacheKey(path: string): string {
-    const base = this.credentials ? `${this.credentials.url}/${this.credentials.project}` : 'default';
-    // Normalize path for consistent cache keys
-    const normalizedPath = path.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+    // Ensure consistent base key generation
+    const url = this.credentials?.url || 'default';
+    const project = this.credentials?.project || 'default';
+    const base = `${url}/${project}`;
+    
+    // Comprehensive path normalization
+    let normalizedPath = path;
+    
+    // Handle virtual file prefixes
+    if (normalizedPath.startsWith('~/')) {
+      normalizedPath = normalizedPath.substring(1);
+    } else if (normalizedPath.startsWith('~')) {
+      normalizedPath = '/' + normalizedPath.substring(1);
+    }
+    
+    // Normalize slashes and ensure leading slash
+    normalizedPath = normalizedPath.replace(/\/+/g, '/');
+    if (!normalizedPath.startsWith('/')) {
+      normalizedPath = '/' + normalizedPath;
+    }
+    
+    // Remove trailing slash except for root
+    if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
+      normalizedPath = normalizedPath.slice(0, -1);
+    }
+    
     return `${base}:${normalizedPath}`;
   }
 
@@ -314,38 +378,83 @@ export class CacheManager {
            path.split('/').length <= 2; // Root level files
   }
 
-  private shouldEvict(newEntrySize: number): boolean {
+  private shouldEvict(sizeDelta: number): boolean {
     const maxSizeBytes = CacheManager.MAX_CACHE_SIZE_MB * 1024 * 1024;
     
     return this.memoryCache.size >= CacheManager.MAX_CACHE_ENTRIES ||
-           (this.currentCacheSize + newEntrySize) > maxSizeBytes;
+           (this.currentCacheSize + sizeDelta) > maxSizeBytes;
   }
 
-  private evictLRU(): void {
-    if (this.accessOrder.length === 0) {
-      return;
+  private evictLRU(): boolean {
+    if (!this.lruHead) {
+      return false;
     }
     
-    const keyToEvict = this.accessOrder.shift()!;
+    const keyToEvict = this.lruHead;
     const entry = this.memoryCache.get(keyToEvict);
     
     if (entry) {
       this.currentCacheSize -= entry.content.length;
       this.memoryCache.delete(keyToEvict);
+      this.removeFromLRU(keyToEvict);
       this.debugLog('Evicted LRU entry', { key: keyToEvict, size: entry.content.length });
+      return true;
     }
+    
+    return false;
   }
 
   private updateAccessOrder(key: string): void {
-    this.removeFromAccessOrder(key);
-    this.accessOrder.push(key);
+    // Move to tail (most recently used)
+    this.removeFromLRU(key);
+    this.addToLRUTail(key);
   }
 
-  private removeFromAccessOrder(key: string): void {
-    const index = this.accessOrder.indexOf(key);
-    if (index > -1) {
-      this.accessOrder.splice(index, 1);
+  private removeFromLRU(key: string): void {
+    const node = this.accessOrderMap.get(key);
+    if (!node) {
+      return;
     }
+    
+    // Update linked list pointers
+    if (node.prev) {
+      const prevNode = this.accessOrderMap.get(node.prev);
+      if (prevNode) {
+        prevNode.next = node.next;
+      }
+    } else {
+      // This was the head
+      this.lruHead = node.next;
+    }
+    
+    if (node.next) {
+      const nextNode = this.accessOrderMap.get(node.next);
+      if (nextNode) {
+        nextNode.prev = node.prev;
+      }
+    } else {
+      // This was the tail
+      this.lruTail = node.prev;
+    }
+    
+    this.accessOrderMap.delete(key);
+  }
+  
+  private addToLRUTail(key: string): void {
+    const node = { prev: this.lruTail, next: undefined };
+    
+    if (this.lruTail) {
+      const tailNode = this.accessOrderMap.get(this.lruTail);
+      if (tailNode) {
+        tailNode.next = key;
+      }
+    } else {
+      // First node
+      this.lruHead = key;
+    }
+    
+    this.lruTail = key;
+    this.accessOrderMap.set(key, node);
   }
 
   private startCleanupTimer(): void {
@@ -363,7 +472,7 @@ export class CacheManager {
       if (now > entry.expires) {
         this.currentCacheSize -= entry.content.length;
         this.memoryCache.delete(key);
-        this.removeFromAccessOrder(key);
+        this.removeFromLRU(key);
         cleanedCount++;
       }
     }
