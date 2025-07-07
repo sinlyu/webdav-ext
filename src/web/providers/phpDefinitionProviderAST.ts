@@ -49,6 +49,26 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 		this._fileSystemProvider = fsProvider;
 	}
 
+	/**
+	 * Normalizes file paths for URI creation, handling virtual file prefixes
+	 */
+	private normalizeFilePathForUri(filePath: string): string {
+		// Handle ~ prefix for virtual files - convert to regular path
+		let normalizedPath = filePath;
+		if (filePath.startsWith('~/')) {
+			normalizedPath = filePath.substring(1); // Remove ~ but keep the /
+		} else if (filePath.startsWith('~')) {
+			normalizedPath = filePath.substring(1); // Remove ~ completely
+		}
+		
+		// Ensure path starts with /
+		if (!normalizedPath.startsWith('/')) {
+			normalizedPath = `/${normalizedPath}`;
+		}
+		
+		return normalizedPath;
+	}
+
 	private clearCaches() {
 		this._symbolCache.clear();
 		this._fileContentCache.clear();
@@ -223,7 +243,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 				}
 
 				try {
-					const fileContent = await this.getFileContent(vscode.Uri.parse(`webdav:${filePath}`));
+					const fileContent = await this.getFileContent(vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`));
 					const fileSymbols = await this.parseFileSymbolsAST(filePath, fileContent);
 					
 					const matchingSymbols = fileSymbols.filter(symbol => 
@@ -420,7 +440,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 							name: classOrInterfaceName,
 							type: 'class',
 							location: new vscode.Location(
-								vscode.Uri.parse(`webdav:${filePath}`),
+								vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 								new vscode.Position(node.loc.start.line - 1, node.loc.start.column)
 							),
 							namespace
@@ -442,7 +462,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 							name: functionName,
 							type: className ? 'method' : 'function',
 							location: new vscode.Location(
-								vscode.Uri.parse(`webdav:${filePath}`),
+								vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 								new vscode.Position(node.loc.start.line - 1, node.loc.start.column)
 							),
 							namespace,
@@ -461,7 +481,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 							name: methodName,
 							type: 'method',
 							location: new vscode.Location(
-								vscode.Uri.parse(`webdav:${filePath}`),
+								vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 								new vscode.Position(node.loc.start.line - 1, node.loc.start.column)
 							),
 							namespace,
@@ -482,7 +502,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 									name: propName,
 									type: 'property',
 									location: new vscode.Location(
-										vscode.Uri.parse(`webdav:${filePath}`),
+										vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 										new vscode.Position(node.loc.start.line - 1, node.loc.start.column)
 									),
 									namespace,
@@ -502,7 +522,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 							name: constantName,
 							type: 'constant',
 							location: new vscode.Location(
-								vscode.Uri.parse(`webdav:${filePath}`),
+								vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 								new vscode.Position(node.loc.start.line - 1, node.loc.start.column)
 							),
 							namespace,
@@ -597,7 +617,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 						name: currentClass,
 						type: 'class',
 						location: new vscode.Location(
-							vscode.Uri.parse(`webdav:${filePath}`),
+							vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 							new vscode.Position(lineIndex, line.indexOf(currentClass))
 						),
 						namespace: currentNamespace || undefined
@@ -613,7 +633,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 						name: functionName,
 						type: currentClass ? 'method' : 'function',
 						location: new vscode.Location(
-							vscode.Uri.parse(`webdav:${filePath}`),
+							vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 							new vscode.Position(lineIndex, line.indexOf('function ' + functionName) + 9)
 						),
 						namespace: currentNamespace || undefined,
@@ -651,7 +671,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 	 */
 	public async getSymbolsInFile(filePath: string): Promise<PHPSymbol[]> {
 		try {
-			const uri = vscode.Uri.parse(`webdav:${filePath}`);
+			const uri = vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`);
 			const content = await this.getFileContent(uri);
 			return await this.parseFileSymbolsAST(filePath, content);
 		} catch (error: any) {

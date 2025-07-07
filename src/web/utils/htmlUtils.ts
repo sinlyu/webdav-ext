@@ -31,8 +31,8 @@ export function parseDirectoryHTML(html: string): WebDAVFileItem[] {
 				const size = sizeMatch ? stripHtmlTags(sizeMatch[1]?.trim() || '') : '';
 				const modified = modifiedMatch ? stripHtmlTags(modifiedMatch[1]?.trim() || '') : '';
 				
-				// Skip parent directory links and empty names
-				if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
+				// Skip parent directory links, empty names, and common directories that should be ignored
+				if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..' && !shouldIgnoreDirectory(name)) {
 					items.push({
 						name,
 						type,
@@ -69,7 +69,7 @@ export function parseDirectoryHTMLFallback(html: string): WebDAVFileItem[] {
 		const href = link[1]?.trim() || '';
 		const name = stripHtmlTags(link[2]?.trim() || '');
 		
-		if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..') {
+		if (name && !name.startsWith('⇤') && name !== 'Parent Directory' && name !== '..' && !shouldIgnoreDirectory(name)) {
 			const isDirectory = href.endsWith('/') || !href.includes('.');
 			items.push({
 				name,
@@ -92,4 +92,41 @@ export function parseDirectoryHTMLFallback(html: string): WebDAVFileItem[] {
  */
 export function stripHtmlTags(html: string): string {
 	return html.replace(/<[^>]*>/g, '').trim();
+}
+
+/**
+ * Determines if a directory should be ignored during indexing/caching
+ * @param name The directory name to check
+ * @returns True if the directory should be ignored, false otherwise
+ */
+export function shouldIgnoreDirectory(name: string): boolean {
+	// Common directories that should be ignored
+	const ignoredDirectories = [
+		'.git',
+		'.gitignore',
+		'.svn',
+		'.hg',
+		'.bzr',
+		'node_modules',
+		'.npm',
+		'.vscode-test',
+		'.nyc_output',
+		'coverage',
+		'.DS_Store',
+		'Thumbs.db',
+		'__pycache__',
+		'.pytest_cache',
+		'.mypy_cache',
+		'.tox',
+		'.coverage',
+		'.cache',
+		'.tmp',
+		'tmp',
+		'temp',
+		'.temp'
+	];
+
+	// Check if the directory name matches any ignored patterns
+	return ignoredDirectories.includes(name) || 
+		   name.startsWith('.') && (name.endsWith('.tmp') || name.endsWith('.temp') || name.endsWith('.cache'));
 }

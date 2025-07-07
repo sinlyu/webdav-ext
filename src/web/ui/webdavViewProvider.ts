@@ -155,8 +155,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				// Set dependencies for filesystem provider
 				this.fsProvider.setDebugLogger(this.debugLog);
 				this.fsProvider.setFileIndex(this.globalFileIndex);
-				this.fsProvider.setDebugOutput(this.debugOutput);
-				
+					
 				// Initialize cache warming and file system
 				await this.fsProvider.initialize();
 
@@ -277,7 +276,6 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			// Set dependencies for filesystem provider
 			this.fsProvider.setDebugLogger(this.debugLog);
 			this.fsProvider.setFileIndex(this.globalFileIndex);
-			this.fsProvider.setDebugOutput(this.debugOutput);
 			
 			// Initialize cache warming and file system
 			await this.fsProvider.initialize();
@@ -380,8 +378,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				// Set dependencies for filesystem provider
 				this.fsProvider.setDebugLogger(this.debugLog);
 				this.fsProvider.setFileIndex(this.globalFileIndex);
-				this.fsProvider.setDebugOutput(this.debugOutput);
-				
+					
 				// Set the real provider in the placeholder IMMEDIATELY
 				if (this.globalPlaceholderProvider) {
 					this.globalPlaceholderProvider.setRealProvider(this.fsProvider);

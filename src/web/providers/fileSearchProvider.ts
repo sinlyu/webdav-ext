@@ -39,8 +39,8 @@ export class WebDAVFileSearchProvider {
 				await this._fileIndex.ensureIndexed();
 				const indexedResults = this._fileIndex.searchFiles(searchPattern);
 				results = indexedResults.map(path => {
-					// Ensure path starts with /
-					const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+					// Normalize path for URI creation, handling virtual file prefixes
+					const normalizedPath = this.normalizeFilePathForUri(path);
 					return vscode.Uri.parse(`webdav:${normalizedPath}`);
 				});
 				this.debugLog('File search completed using index', { resultCount: results.length });
@@ -83,8 +83,8 @@ export class WebDAVFileSearchProvider {
 					}
 				} else {
 					if (this.matchesPattern(item.name, pattern)) {
-						// Ensure path starts with /
-						const normalizedPath = itemPath.startsWith('/') ? itemPath : `/${itemPath}`;
+						// Normalize path for URI creation, handling virtual file prefixes
+						const normalizedPath = this.normalizeFilePathForUri(itemPath);
 						results.push(vscode.Uri.parse(`webdav:${normalizedPath}`));
 					}
 				}
@@ -175,5 +175,25 @@ export class WebDAVFileSearchProvider {
 
 	setDebugLogger(logger: (message: string, data?: any) => void) {
 		this.debugLog = logger;
+	}
+
+	/**
+	 * Normalizes file paths for URI creation, handling virtual file prefixes
+	 */
+	private normalizeFilePathForUri(filePath: string): string {
+		// Handle ~ prefix for virtual files - convert to regular path
+		let normalizedPath = filePath;
+		if (filePath.startsWith('~/')) {
+			normalizedPath = filePath.substring(1); // Remove ~ but keep the /
+		} else if (filePath.startsWith('~')) {
+			normalizedPath = filePath.substring(1); // Remove ~ completely
+		}
+		
+		// Ensure path starts with /
+		if (!normalizedPath.startsWith('/')) {
+			normalizedPath = `/${normalizedPath}`;
+		}
+		
+		return normalizedPath;
 	}
 }

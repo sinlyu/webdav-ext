@@ -166,6 +166,74 @@ export class CacheManager {
     this.debugLog('Cached directory', { path, entryCount: entries.length });
   }
 
+  /**
+   * Delete cached file content
+   */
+  async deleteFile(path: string): Promise<void> {
+    const key = this.getCacheKey(path);
+    const entry = this.memoryCache.get(key);
+    
+    if (entry) {
+      this.currentCacheSize -= entry.content.length;
+      this.memoryCache.delete(key);
+      this.removeFromAccessOrder(key);
+      this.debugLog('Deleted file from cache', { path, size: entry.content.length });
+    } else {
+      this.debugLog('File not found in cache for deletion', { path });
+    }
+  }
+
+  /**
+   * Delete cached directory listing
+   */
+  async deleteDirectory(path: string): Promise<void> {
+    const key = this.getCacheKey(path);
+    const cached = this.directoryCache.get(key);
+    
+    if (cached) {
+      this.directoryCache.delete(key);
+      this.debugLog('Deleted directory from cache', { path, entryCount: cached.entries.length });
+    } else {
+      this.debugLog('Directory not found in cache for deletion', { path });
+    }
+  }
+
+  /**
+   * Delete all cache entries that start with the given path (for recursive deletes)
+   */
+  async deleteRecursive(basePath: string): Promise<void> {
+    const baseKey = this.getCacheKey(basePath);
+    let deletedFiles = 0;
+    let deletedDirectories = 0;
+    let freedSize = 0;
+
+    // Delete all files that start with this path
+    for (const [key, entry] of this.memoryCache.entries()) {
+      if (key.startsWith(baseKey)) {
+        freedSize += entry.content.length;
+        this.memoryCache.delete(key);
+        this.removeFromAccessOrder(key);
+        deletedFiles++;
+      }
+    }
+
+    // Delete all directories that start with this path
+    for (const [key] of this.directoryCache.entries()) {
+      if (key.startsWith(baseKey)) {
+        this.directoryCache.delete(key);
+        deletedDirectories++;
+      }
+    }
+
+    this.currentCacheSize -= freedSize;
+    this.debugLog('Recursive cache deletion completed', { 
+      basePath, 
+      deletedFiles, 
+      deletedDirectories, 
+      freedSize 
+    });
+  }
+
 
   /**
    * Get cache statistics
@@ -219,7 +287,9 @@ export class CacheManager {
 
   private getCacheKey(path: string): string {
     const base = this.credentials ? `${this.credentials.url}/${this.credentials.project}` : 'default';
-    return `${base}:${path}`;
+    // Normalize path for consistent cache keys
+    const normalizedPath = path.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+    return `${base}:${normalizedPath}`;
   }
 
   private getTTL(path: string): number {

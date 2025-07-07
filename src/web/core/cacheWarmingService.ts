@@ -248,8 +248,8 @@ export class CacheWarmingService {
     try {
       // Check if path is already cached
       const cachedDir = await this.cacheManager.getDirectory(path);
-      if (cachedDir) {
-        this.debugLog('Path already cached', { path });
+      if (cachedDir && cachedDir.length > 0) {
+        this.debugLog('Path already cached', { path, entries: cachedDir.length });
         return;
       }
 

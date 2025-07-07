@@ -4,6 +4,42 @@ All notable changes to the "edoc Automate WebDAV" extension will be documented i
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-01-07
+
+### 🐛 Bug Fixes
+- **🔗 Fixed Go-to-Definition for Virtual Files**: Resolved filesystem provider URI issues
+  - Fixed malformed URI error when navigating to virtual stub files (`webdav:~/.stubs/plugin-api.stubs.php`)
+  - Added proper path normalization for virtual file URIs in all providers
+  - Updated PHP definition providers (both regex and AST-based) to handle virtual file paths correctly
+  - Fixed URI generation in file search and text search providers for virtual files
+  - Go-to-definition now works seamlessly for both real WebDAV files and virtual stub files
+
+- **📁 Improved Virtual File System**: Enhanced virtual file visibility and caching
+  - Fixed virtual files not appearing in VS Code file explorer
+  - Enhanced virtual file path matching logic for consistent directory listings
+  - Improved parent path calculation for virtual files with `~` prefix
+  - Added flexible path matching for root directory virtual files
+  - Better debugging and logging for virtual file resolution
+
+- **⚡ Enhanced Directory Filtering**: Optimized indexing performance
+  - Added comprehensive directory filtering to exclude common development directories
+  - Automatically filters `.git`, `.svn`, `.hg`, `node_modules`, `.cache`, `.tmp`, and other system directories
+  - Reduces unnecessary cache entries and improves indexing performance
+  - Configurable ignore patterns for future extensibility
+
+- **🔄 Fixed Cache Performance Issues**: Resolved server requests after cache warming
+  - Fixed folders still requesting server on first access after cache warming
+  - Improved path normalization consistency between cache warming and actual requests
+  - Enhanced cache key normalization for consistent cache hits/misses
+  - Better validation of cached directory entries to prevent empty cache issues
+  - Optimized URL path building with proper cleaning and normalization
+
+### 🏗️ Technical Improvements
+- **URI Normalization**: Added `normalizeFilePathForUri()` method across all providers
+- **Path Consistency**: Unified path handling between virtual and real files
+- **Cache Optimization**: Enhanced cache key generation and validation
+- **Debug Logging**: Improved debugging for virtual file operations and cache performance
+
 ## [0.2.0] - 2025-01-05
 
 ### 🚀 PHP Development Features

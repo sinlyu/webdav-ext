@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { WebDAVCredentials, WebDAVFileItem } from '../types';
 import { CacheManager } from './cacheManager';
-import { parseDirectoryHTML } from '../utils/htmlUtils';
+import { WebDAVApi } from './webdavApi';
 
 export interface IndexedFile {
 	path: string;
@@ -21,14 +21,23 @@ export class WebDAVFileIndex {
 	private _batchSize: number = 50;
 	private _maxConcurrentRequests: number = 5;
 	private _onIndexUpdatedCallback: (() => Promise<void>) | null = null;
+	private _webdavApi: WebDAVApi | null = null;
 
 	constructor(credentials: WebDAVCredentials | null = null, cacheManager: CacheManager | null = null) {
 		this._credentials = credentials;
 		this._cacheManager = cacheManager;
+		if (credentials) {
+			this._webdavApi = new WebDAVApi(credentials, this._debugLog);
+		}
 	}
 
 	setCredentials(credentials: WebDAVCredentials | null) {
 		this._credentials = credentials;
+		if (credentials) {
+			this._webdavApi = new WebDAVApi(credentials, this._debugLog);
+		} else {
+			this._webdavApi = null;
+		}
 		// Clear existing index when credentials change
 		this.clearIndex();
 	}
@@ -39,6 +48,9 @@ export class WebDAVFileIndex {
 
 	setDebugLogger(logger: (message: string, data?: any) => void) {
 		this._debugLog = logger;
+		if (this._credentials) {
+			this._webdavApi = new WebDAVApi(this._credentials, logger);
+		}
 	}
 
 	setOnIndexUpdatedCallback(callback: (() => Promise<void>) | null) {
@@ -251,8 +263,12 @@ export class WebDAVFileIndex {
 			}
 		}
 
-		// Fallback to direct listing
-		return this.getDirectoryListing(dirPath);
+		// Fallback to direct listing via WebDAV API
+		if (!this._webdavApi) {
+			return [];
+		}
+		const response = await this._webdavApi.getDirectoryListing(dirPath);
+		return response.success ? response.items : [];
 	}
 
 
@@ -297,8 +313,14 @@ export class WebDAVFileIndex {
 			const fileName = this.getFileName(filePath);
 			
 			// Try to get file info
-			const items = await this.getDirectoryListing(parentPath);
-			const item = items.find(i => i.name === fileName);
+			if (!this._webdavApi) {
+				return;
+			}
+			const response = await this._webdavApi.getDirectoryListing(parentPath);
+			if (!response.success) {
+				return;
+			}
+			const item = response.items.find(i => i.name === fileName);
 			
 			if (item) {
 				const indexedFile: IndexedFile = {
@@ -433,49 +455,5 @@ export class WebDAVFileIndex {
 		return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath;
 	}
 
-	private async getDirectoryListing(dirPath: string): Promise<WebDAVFileItem[]> {
-		if (!this._credentials) {
-			throw new Error('No credentials available');
-		}
-
-		let realItems: WebDAVFileItem[] = [];
-		
-		try {
-			let cleanDirPath = dirPath.startsWith('/') ? dirPath.substring(1) : dirPath;
-			
-			if (cleanDirPath === '' || cleanDirPath === '/') {
-				cleanDirPath = '';
-			}
-			
-			const dirURL = cleanDirPath 
-				? `${this._credentials.url}/apps/remote/${this._credentials.project}/${cleanDirPath}`
-				: `${this._credentials.url}/apps/remote/${this._credentials.project}/`;
-			
-			const response = await fetch(dirURL, {
-				method: 'GET',
-				headers: {
-					'Authorization': `Basic ${btoa(`${this._credentials.username}:${this._credentials.password}`)}`,
-					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-					'User-Agent': 'VSCode-WebDAV-Extension'
-				},
-				mode: 'cors',
-				credentials: 'include'
-			});
-			
-			if (!response.ok) {
-				throw new Error(`HTTP ${response.status}`);
-			}
-			
-			const html = await response.text();
-			realItems = parseDirectoryHTML(html);
-		} catch (error: any) {
-			this._debugLog('Error in getDirectoryListing', { error: error.message });
-			// Continue with empty real items array, but still check for virtual files
-		}
-		
-		// For now, the file index doesn't have direct access to virtual files
-		// This method is only used during indexing, and virtual files are added separately
-		return realItems;
-	}
 
 }

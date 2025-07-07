@@ -210,8 +210,8 @@ export class WebDAVTextSearchProvider {
 				
 				if (matches.length > 0) {
 					matchCount += matches.length;
-					// Ensure path starts with /
-					const normalizedPath = filePath.startsWith('/') ? filePath : `/${filePath}`;
+					// Normalize path for URI creation, handling virtual file prefixes
+					const normalizedPath = this.normalizeFilePathForUri(filePath);
 					const uri = vscode.Uri.parse(`webdav:${normalizedPath}`);
 					const result = {
 						uri,
@@ -351,5 +351,25 @@ export class WebDAVTextSearchProvider {
 
 	setDebugLogger(logger: (message: string, data?: any) => void) {
 		this.debugLog = logger;
+	}
+
+	/**
+	 * Normalizes file paths for URI creation, handling virtual file prefixes
+	 */
+	private normalizeFilePathForUri(filePath: string): string {
+		// Handle ~ prefix for virtual files - convert to regular path
+		let normalizedPath = filePath;
+		if (filePath.startsWith('~/')) {
+			normalizedPath = filePath.substring(1); // Remove ~ but keep the /
+		} else if (filePath.startsWith('~')) {
+			normalizedPath = filePath.substring(1); // Remove ~ completely
+		}
+		
+		// Ensure path starts with /
+		if (!normalizedPath.startsWith('/')) {
+			normalizedPath = `/${normalizedPath}`;
+		}
+		
+		return normalizedPath;
 	}
 }

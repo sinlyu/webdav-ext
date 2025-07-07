@@ -30,6 +30,26 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 		this._fileSystemProvider = fsProvider;
 	}
 
+	/**
+	 * Normalizes file paths for URI creation, handling virtual file prefixes
+	 */
+	private normalizeFilePathForUri(filePath: string): string {
+		// Handle ~ prefix for virtual files - convert to regular path
+		let normalizedPath = filePath;
+		if (filePath.startsWith('~/')) {
+			normalizedPath = filePath.substring(1); // Remove ~ but keep the /
+		} else if (filePath.startsWith('~')) {
+			normalizedPath = filePath.substring(1); // Remove ~ completely
+		}
+		
+		// Ensure path starts with /
+		if (!normalizedPath.startsWith('/')) {
+			normalizedPath = `/${normalizedPath}`;
+		}
+		
+		return normalizedPath;
+	}
+
 	private clearCaches() {
 		this._symbolCache.clear();
 		this._fileContentCache.clear();
@@ -227,7 +247,7 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 
 				try {
 					this._debugLog('Searching file for symbols', { filePath, symbolName });
-					const fileContent = await this.getFileContent(vscode.Uri.parse(`webdav:${filePath}`));
+					const fileContent = await this.getFileContent(vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`));
 					const fileSymbols = await this.parseFileSymbols(filePath, fileContent);
 					
 					const matchingSymbols = fileSymbols.filter(symbol => 
@@ -456,7 +476,7 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 						name: currentClass,
 						type: 'class',
 						location: new vscode.Location(
-							vscode.Uri.parse(`webdav:${filePath}`),
+							vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 							new vscode.Position(lineIndex, line.indexOf(currentClass))
 						),
 						namespace: currentNamespace || undefined
@@ -503,7 +523,7 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 						name: functionName,
 						type: currentClass ? 'method' : 'function',
 						location: new vscode.Location(
-							vscode.Uri.parse(`webdav:${filePath}`),
+							vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 							new vscode.Position(lineIndex, functionNameIndex)
 						),
 						namespace: currentNamespace || undefined,
@@ -550,7 +570,7 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 							name: propertyName,
 							type: 'property',
 							location: new vscode.Location(
-								vscode.Uri.parse(`webdav:${filePath}`),
+								vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 								new vscode.Position(lineIndex, line.indexOf('$' + propertyName))
 							),
 							namespace: currentNamespace || undefined,
@@ -570,7 +590,7 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 						name: constantName,
 						type: 'constant',
 						location: new vscode.Location(
-							vscode.Uri.parse(`webdav:${filePath}`),
+							vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`),
 							new vscode.Position(lineIndex, line.indexOf(constantName))
 						),
 						namespace: currentNamespace || undefined,
@@ -620,7 +640,7 @@ export class PHPDefinitionProvider implements IPHPDefinitionProvider {
 	 */
 	public async getSymbolsInFile(filePath: string): Promise<PHPSymbol[]> {
 		try {
-			const uri = vscode.Uri.parse(`webdav:${filePath}`);
+			const uri = vscode.Uri.parse(`webdav:${this.normalizeFilePathForUri(filePath)}`);
 			const content = await this.getFileContent(uri);
 			return await this.parseFileSymbols(filePath, content);
 		} catch (error: any) {
