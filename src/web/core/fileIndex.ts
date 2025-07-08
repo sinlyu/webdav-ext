@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { WebDAVCredentials, WebDAVFileItem } from '../types';
-import { CacheManager } from './cacheManager';
+import { WebDAVCache } from './simpleCache';
 import { WebDAVApi } from './webdavApi';
 
 export interface IndexedFile {
@@ -17,15 +17,16 @@ export class WebDAVFileIndex {
 	private _isIndexing: boolean = false;
 	private _indexingPromise: Promise<void> | null = null;
 	private _debugLog: (message: string, data?: any) => void = () => {};
-	private _cacheManager: CacheManager | null = null;
+	private _cache: WebDAVCache | null = null;
 	private _batchSize: number = 50;
 	private _maxConcurrentRequests: number = 5;
 	private _onIndexUpdatedCallback: (() => Promise<void>) | null = null;
+	private _onIndexStartedCallback: (() => void) | null = null;
 	private _webdavApi: WebDAVApi | null = null;
 
-	constructor(credentials: WebDAVCredentials | null = null, cacheManager: CacheManager | null = null) {
+	constructor(credentials: WebDAVCredentials | null = null, cache: WebDAVCache | null = null) {
 		this._credentials = credentials;
-		this._cacheManager = cacheManager;
+		this._cache = cache;
 		if (credentials) {
 			this._webdavApi = new WebDAVApi(credentials, this._debugLog);
 		}
@@ -42,8 +43,8 @@ export class WebDAVFileIndex {
 		this.clearIndex();
 	}
 
-	setCacheManager(cacheManager: CacheManager) {
-		this._cacheManager = cacheManager;
+	setCache(cache: WebDAVCache) {
+		this._cache = cache;
 	}
 
 	setDebugLogger(logger: (message: string, data?: any) => void) {
@@ -55,6 +56,10 @@ export class WebDAVFileIndex {
 
 	setOnIndexUpdatedCallback(callback: (() => Promise<void>) | null) {
 		this._onIndexUpdatedCallback = callback;
+	}
+
+	setOnIndexStartedCallback(callback: (() => void) | null) {
+		this._onIndexStartedCallback = callback;
 	}
 
 	clearIndex() {
@@ -88,13 +93,22 @@ export class WebDAVFileIndex {
 		}
 
 		this._isIndexing = true;
-		this._debugLog('Starting optimized file index rebuild');
+		this._debugLog('Starting full recursive file index rebuild');
+		
+		// Call the indexing started callback if set
+		if (this._onIndexStartedCallback) {
+			try {
+				this._onIndexStartedCallback();
+			} catch (error: any) {
+				this._debugLog('Error in index started callback', { error: error.message });
+			}
+		}
 		
 		try {
 			this.clearIndex();
 			this._indexingPromise = this.batchIndexDirectory('');
 			await this._indexingPromise;
-			this._debugLog('File index rebuild completed', { 
+			this._debugLog('Full recursive file index rebuild completed', { 
 				totalFiles: this._fileIndex.size,
 				totalDirectories: this._directoryIndex.size 
 			});
@@ -130,6 +144,15 @@ export class WebDAVFileIndex {
 		this._isIndexing = true;
 		this._debugLog('Starting quick index (root level only)');
 		
+		// Call the indexing started callback if set
+		if (this._onIndexStartedCallback) {
+			try {
+				this._onIndexStartedCallback();
+			} catch (error: any) {
+				this._debugLog('Error in index started callback', { error: error.message });
+			}
+		}
+		
 		try {
 			// Only index the root directory for immediate workspace availability
 			await this.indexSingleDirectory('');
@@ -156,13 +179,15 @@ export class WebDAVFileIndex {
 	private async batchIndexDirectory(dirPath: string): Promise<void> {
 		const directoriesToProcess = [dirPath];
 		const processedDirectories = new Set<string>();
+		const pendingDirectories = new Set<string>();
 		
 		while (directoriesToProcess.length > 0) {
 			// Process directories in batches
 			const currentBatch = directoriesToProcess.splice(0, this._batchSize);
-			const batchPromises = currentBatch.map(dir => 
-				this.processBatchDirectory(dir, directoriesToProcess, processedDirectories)
-			);
+			const batchPromises = currentBatch.map(dir => {
+				pendingDirectories.add(dir);
+				return this.processBatchDirectory(dir, directoriesToProcess, processedDirectories, pendingDirectories);
+			});
 			
 			// Limit concurrent requests
 			const batches = [];
@@ -181,17 +206,17 @@ export class WebDAVFileIndex {
 	private async processBatchDirectory(
 		dirPath: string, 
 		directoriesToProcess: string[], 
-		processedDirectories: Set<string>
+		processedDirectories: Set<string>,
+		pendingDirectories: Set<string>
 	): Promise<void> {
 		if (processedDirectories.has(dirPath)) {
 			return;
 		}
 		
-		processedDirectories.add(dirPath);
-		
 		try {
 			const items = await this.getDirectoryListingWithCache(dirPath);
 			const childPaths = new Set<string>();
+			const subdirectories: string[] = [];
 			
 			for (const item of items) {
 				const itemPath = dirPath ? `${dirPath}/${item.name}` : item.name;
@@ -207,15 +232,27 @@ export class WebDAVFileIndex {
 				this._fileIndex.set(itemPath, indexedFile);
 				
 				if (item.isDirectory && 
-					!processedDirectories.has(itemPath)) {
-					directoriesToProcess.push(itemPath);
+					!processedDirectories.has(itemPath) && 
+					!pendingDirectories.has(itemPath)) {
+					subdirectories.push(itemPath);
 				}
 			}
 			
+			// Add subdirectories to the processing queue
+			for (const subdir of subdirectories) {
+				directoriesToProcess.push(subdir);
+			}
+			
+			// Set directory index and mark as processed
 			this._directoryIndex.set(dirPath, childPaths);
+			processedDirectories.add(dirPath);
+			pendingDirectories.delete(dirPath);
 			
 		} catch (error: any) {
 			this._debugLog('Error processing batch directory', { dirPath, error: error.message });
+			// Mark as processed even on error to prevent infinite loops
+			processedDirectories.add(dirPath);
+			pendingDirectories.delete(dirPath);
 		}
 	}
 
@@ -246,20 +283,34 @@ export class WebDAVFileIndex {
 	}
 
 	private async getDirectoryListingWithCache(dirPath: string): Promise<WebDAVFileItem[]> {
-		// Check cache first
-		if (this._cacheManager) {
-			const cached = await this._cacheManager.getDirectory(dirPath);
-			if (cached) {
-				// Convert cache entries to WebDAVFileItem format
-				return cached.map(entry => ({
-					name: entry.name,
-					isDirectory: entry.type === vscode.FileType.Directory,
-					size: entry.size.toString(),
-					lastModified: new Date(entry.mtime).toISOString(),
-					type: entry.type === vscode.FileType.Directory ? 'Collection' : 'File',
-					modified: new Date(entry.mtime).toISOString(),
-					path: `${dirPath}/${entry.name}`.replace(/\/+/g, '/')
-				}));
+		// Check cache first - try multiple path formats
+		if (this._cache) {
+			const pathsToTry = [
+				dirPath,
+				dirPath.startsWith('/') ? dirPath.substring(1) : `/${dirPath}`,
+				dirPath === '/' ? '' : dirPath,
+				dirPath === '' ? '/' : dirPath
+			].filter((path, index, arr) => arr.indexOf(path) === index); // Remove duplicates
+
+			for (const tryPath of pathsToTry) {
+				const cached = this._cache.getDirectory(tryPath);
+				if (cached) {
+					this._debugLog('Directory cache hit during indexing', { 
+						dirPath, 
+						cacheKey: tryPath,
+						entries: cached.length 
+					});
+					// Convert cache entries to WebDAVFileItem format
+					return cached.map(entry => ({
+						name: entry.name,
+						isDirectory: entry.type === vscode.FileType.Directory,
+						size: entry.size.toString(),
+						lastModified: new Date(entry.mtime).toISOString(),
+						type: entry.type === vscode.FileType.Directory ? 'Collection' : 'File',
+						modified: new Date(entry.mtime).toISOString(),
+						path: `${dirPath}/${entry.name}`.replace(/\/+/g, '/')
+					}));
+				}
 			}
 		}
 
@@ -267,7 +318,40 @@ export class WebDAVFileIndex {
 		if (!this._webdavApi) {
 			return [];
 		}
+		
+		this._debugLog('Directory cache miss - fetching from WebDAV', { dirPath });
 		const response = await this._webdavApi.getDirectoryListing(dirPath);
+		
+		if (response.success) {
+			// Populate cache with the retrieved data
+			if (this._cache) {
+				const cacheEntries = response.items.map(item => ({
+					name: item.name,
+					type: item.isDirectory ? vscode.FileType.Directory : vscode.FileType.File,
+					size: parseInt(item.size) || 0,
+					mtime: new Date(item.modified).getTime()
+				}));
+				
+				// Store with multiple path formats for consistency
+				const pathFormats = [
+					dirPath,
+					dirPath.startsWith('/') ? dirPath.substring(1) : `/${dirPath}`,
+					dirPath === '/' ? '' : dirPath,
+					dirPath === '' ? '/' : dirPath
+				].filter((path, index, arr) => arr.indexOf(path) === index); // Remove duplicates
+
+				for (const pathFormat of pathFormats) {
+					this._cache.setDirectory(pathFormat, cacheEntries);
+				}
+				
+				this._debugLog('Populated cache during indexing', { 
+					dirPath, 
+					pathFormats,
+					entries: cacheEntries.length,
+					items: cacheEntries.map(e => e.name)
+				});
+			}
+		}
 		return response.success ? response.items : [];
 	}
 
@@ -302,6 +386,11 @@ export class WebDAVFileIndex {
 	// Debug method to get index size
 	getIndexSize(): number {
 		return this._fileIndex.size;
+	}
+
+	// Check if indexing is in progress
+	isIndexing(): boolean {
+		return this._isIndexing;
 	}
 
 	// File operation event handlers

@@ -20,6 +20,12 @@ export class WebDAVCustomSearchProvider {
 		}
 
 		try {
+			// Check if indexing is needed
+			if (this._fileIndex.isIndexing()) {
+				vscode.window.showInformationMessage('WebDAV directories are being indexed. Please wait...');
+				return;
+			}
+			
 			await this._fileIndex.ensureIndexed();
 			const allFiles = this._fileIndex.getAllFiles();
 
@@ -63,6 +69,12 @@ export class WebDAVCustomSearchProvider {
 		}
 
 		try {
+			// Check if indexing is needed
+			if (this._fileIndex.isIndexing()) {
+				vscode.window.showInformationMessage('WebDAV directories are being indexed. Please wait...');
+				return;
+			}
+			
 			await this._fileIndex.ensureIndexed();
 			const searchResults = await this.searchInFiles(searchQuery);
 
@@ -121,6 +133,12 @@ export class WebDAVCustomSearchProvider {
 		}
 
 		try {
+			// Check if indexing is needed
+			if (this._fileIndex.isIndexing()) {
+				vscode.window.showInformationMessage('WebDAV directories are being indexed. Please wait...');
+				return;
+			}
+			
 			await this._fileIndex.ensureIndexed();
 			const symbolResults = await this.searchForSymbols(searchQuery);
 
@@ -328,7 +346,7 @@ export class WebDAVCustomSearchProvider {
 		const textExtensions = [
 			'.txt', '.js', '.ts', '.json', '.css', '.html', '.htm', '.xml', 
 			'.md', '.py', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', 
-			'.php', '.rb', '.go', '.rs', '.swift', '.kt', '.yml', '.yaml'
+			'.php', '.rb', '.go', '.rs', '.swift', '.kt', '.yml', '.yaml', '.log'
 		];
 		return textExtensions.some(ext => filePath.toLowerCase().endsWith(ext));
 	}

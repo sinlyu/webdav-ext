@@ -4,6 +4,25 @@ All notable changes to the "edoc Automate WebDAV" extension will be documented i
 
 ## [Unreleased]
 
+## [0.3.12] - 2025-01-08
+
+### 🐛 Bug Fixes
+- **🔧 Fixed Directory Caching Issues**: Resolved cache misses for second-level folders
+  - Fixed race condition in `batchIndexDirectory` method where parent directories were cached before subdirectories were processed
+  - Enhanced `processBatchDirectory` method with proper tracking of pending directories to prevent race conditions
+  - Improved `getDirectoryListingWithCache` method to try multiple path formats for consistent cache lookups
+  - Added comprehensive path format handling (`/path`, `path`, `''`, `/`) for cache consistency
+  - Fixed cache population to store entries with multiple path formats for better compatibility
+  - Added detailed logging for cache hits/misses during directory indexing
+  - Ensured proper error handling to prevent infinite processing loops
+
+### 🏗️ Technical Improvements
+- **Enhanced Cache Management**: Better hierarchical directory caching
+  - Improved directory processing order to ensure all subdirectories are properly cached
+  - Added `pendingDirectories` tracking to prevent processing race conditions
+  - Enhanced cache key normalization for consistent cache access patterns
+  - Better path format consistency between indexing and filesystem operations
+
 ## [0.3.0] - 2025-01-07
 
 ### 🚀 Major Features

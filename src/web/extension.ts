@@ -4,13 +4,24 @@ import { WebDAVTextSearchProvider } from './providers/textSearchProvider';
 import { WebDAVWorkspaceSymbolProvider } from './providers/workspaceSymbolProvider';
 import { WebDAVDocumentSymbolProvider } from './providers/documentSymbolProvider';
 import { WebDAVCustomSearchProvider } from './providers/customSearchProvider';
-import { PHPDefinitionProvider } from './providers/phpDefinitionProvider';
 import { PHPDefinitionProviderAST } from './providers/phpDefinitionProviderAST';
 import { IPHPDefinitionProvider } from './providers/phpDefinitionProviderInterface';
 import { WebDAVFileIndex } from './core/fileIndex';
 import { WebDAVViewProvider } from './ui/webdavViewProvider';
 import { PlaceholderFileSystemProvider } from './providers/fileSystemProvider';
 import { createDebugLogger } from './utils/logging';
+import { Logger, createChildLogger } from './utils/logger';
+import { PHPConfigurationManager } from './services/phpConfigurationManager';
+import { VirtualFileManager } from './services/virtualFileManager';
+import { CommandManager } from './commands/commandManager';
+import { ShowDebugCommand } from './commands/showDebugCommand';
+import { RefreshWorkspaceCommand } from './commands/refreshWorkspaceCommand';
+import { AddStubFileCommand } from './commands/addStubFileCommand';
+import { SetupPhpStubsCommand } from './commands/setupPhpStubsCommand';
+import { TestVirtualFileCommand } from './commands/testVirtualFileCommand';
+import { TestGoToDefinitionCommand } from './commands/testGoToDefinitionCommand';
+import { SearchFilesCommand, SearchTextCommand, SearchSymbolsCommand } from './commands/searchCommand';
+import { DebugFileSystemCommand } from './commands/debugFileSystemCommand';
 
 
 
@@ -28,6 +39,11 @@ let globalFileIndex: WebDAVFileIndex;
 let globalStubFileCreator: (() => Promise<void>) | null = null;
 let debugLog: (message: string, data?: any) => void;
 
+// Service instances
+let phpConfigManager: PHPConfigurationManager;
+let virtualFileManager: VirtualFileManager;
+let commandManager: CommandManager;
+
 // Function to update PHP Tools workspace.includePath with all PHP directories
 async function updatePhpWorkspaceIncludePath() {
 	try {
@@ -40,43 +56,7 @@ async function updatePhpWorkspaceIncludePath() {
 			file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
 		);
 		
-		// Create unique directories containing PHP files
-		const phpDirectories = new Set<string>();
-		allPhpFiles.forEach(file => {
-			const dir = file.substring(0, file.lastIndexOf('/'));
-			if (dir && dir !== '.' && dir !== '') {
-				phpDirectories.add(dir.startsWith('/') ? dir.substring(1) : dir);
-			}
-		});
-		
-		// Add stubs directory
-		phpDirectories.add('.stubs');
-		
-		// Get current workspace.includePath - handle both array and string formats
-		const phpConfig = vscode.workspace.getConfiguration('php');
-		let currentIncludePaths: string[] = [];
-		const currentConfig = phpConfig.get('workspace.includePath', [] as any);
-		if (Array.isArray(currentConfig)) {
-			currentIncludePaths = currentConfig;
-		} else if (typeof currentConfig === 'string') {
-			currentIncludePaths = currentConfig.split(';').filter((p: string) => p.trim());
-		}
-		
-		// Merge with existing paths
-		const newIncludePaths = new Set([...currentIncludePaths]);
-		phpDirectories.forEach(dir => newIncludePaths.add(dir));
-		
-		// Convert to semicolon-separated string as required by PHP Tools
-		const finalIncludePaths = Array.from(newIncludePaths).filter(p => p.trim()).join(';');
-		
-		await phpConfig.update('workspace.includePath', finalIncludePaths, vscode.ConfigurationTarget.Workspace);
-		
-		debugLog('Updated PHP Tools workspace.includePath', { 
-			includePath: finalIncludePaths,
-			phpDirectoryCount: phpDirectories.size,
-			totalPhpFiles: allPhpFiles.length,
-			allDirectories: Array.from(phpDirectories)
-		});
+		await phpConfigManager.updateWorkspaceIncludePath(allPhpFiles);
 	} catch (error: any) {
 		debugLog('Failed to update PHP Tools workspace.includePath', { error: error.message });
 	}
@@ -90,6 +70,14 @@ export function activate(context: vscode.ExtensionContext) {
 	debugOutput = vscode.window.createOutputChannel('WebDAV Debug');
 	debugLog = createDebugLogger(debugOutput);
 	context.subscriptions.push(debugOutput);
+	
+	// Initialize centralized logger
+	Logger.initialize(debugOutput);
+	const logger = createChildLogger('Extension');
+	
+	// Initialize services
+	phpConfigManager = new PHPConfigurationManager();
+	commandManager = new CommandManager();
 	
 	const timestamp = new Date().toISOString();
 	debugOutput.appendLine(`===============================================`);
@@ -120,15 +108,9 @@ export function activate(context: vscode.ExtensionContext) {
 	globalDocumentSymbolProvider = new WebDAVDocumentSymbolProvider();
 	globalCustomSearchProvider = new WebDAVCustomSearchProvider();
 	
-	// Choose PHP definition provider (AST-based is more accurate)
-	const useASTParser = vscode.workspace.getConfiguration('webdav').get('useASTParser', false);
-	if (useASTParser) {
-		globalPhpDefinitionProvider = new PHPDefinitionProviderAST();
-		debugLog('Using AST-based PHP definition provider');
-	} else {
-		globalPhpDefinitionProvider = new PHPDefinitionProvider();
-		debugLog('Using regex-based PHP definition provider');
-	}
+	// Use AST-based PHP definition provider (more accurate)
+	globalPhpDefinitionProvider = new PHPDefinitionProviderAST();
+	debugLog('Using AST-based PHP definition provider');
 	
 	globalFileIndex = new WebDAVFileIndex();
 	
@@ -144,12 +126,36 @@ export function activate(context: vscode.ExtensionContext) {
 	// Set callback to update PHP workspace.includePath when index is updated
 	globalFileIndex.setOnIndexUpdatedCallback(updatePhpWorkspaceIncludePath);
 	
+	// Set callback to show notification when indexing starts
+	globalFileIndex.setOnIndexStartedCallback(() => {
+		vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: "WebDAV: Indexing directories recursively...",
+			cancellable: false
+		}, async (progress) => {
+			// Wait for indexing to complete
+			while (globalFileIndex?.isIndexing()) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+			}
+			const stats = globalFileIndex?.getIndexStats();
+			if (stats) {
+				debugLog('Recursive indexing completed', stats);
+				vscode.window.showInformationMessage(
+					`WebDAV indexing complete: ${stats.files} files, ${stats.directories} directories cached`
+				);
+			}
+		});
+	});
+	
 	// Set file index for all providers
 	globalFileSearchProvider.setFileIndex(globalFileIndex);
 	globalTextSearchProvider.setFileIndex(globalFileIndex);
 	globalWorkspaceSymbolProvider.setFileIndex(globalFileIndex);
 	globalCustomSearchProvider.setFileIndex(globalFileIndex);
 	globalPhpDefinitionProvider.setFileIndex(globalFileIndex);
+	
+	// Initialize virtual file manager
+	virtualFileManager = new VirtualFileManager(context, globalPlaceholderProvider, phpConfigManager);
 	
 	// Register stable API providers (always available)
 	try {
@@ -170,10 +176,7 @@ export function activate(context: vscode.ExtensionContext) {
 	} catch (error: any) {
 		debugLog('Failed to register stable symbol providers', { error: error.message });
 	}
-
-	// DISABLED: Proposed API providers (require development mode)
-	// These are kept for future use when APIs are stabilized
-
+	
 	try {
 		// Try to register search providers using experimental API
 		if ((vscode.workspace as any).registerFileSearchProvider) {
@@ -216,159 +219,10 @@ export function activate(context: vscode.ExtensionContext) {
 			// Create virtual stub file creation function  
 			const createVirtualStubFile = async () => {
 				try {
-					// Get the real WebDAV provider
-					const realProvider = globalPlaceholderProvider?.getRealProvider();
-					if (!realProvider) {
-						debugLog('No WebDAV provider available for virtual file creation');
-						return;
-					}
-					
-					const sourceStubUri = vscode.Uri.joinPath(context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
-					const stubContent = await vscode.workspace.fs.readFile(sourceStubUri);
-					
-					// Create virtual directories with ~ prefix
-					realProvider.createVirtualDirectory('~/.stubs');
-					
-					// Create virtual stub file with ~ prefix to match expected path format
-					realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
-					debugLog('Created virtual PHP stub file in WebDAV filesystem', { size: stubContent.length });
-					
-					// Force refresh to ensure the file is visible
-					await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-					
-					// Pre-load the stub file to enable "go to definition" without manual opening
-					// Wait for file system to be fully ready and workspace to be loaded
-					setTimeout(async () => {
-						try {
-							// Check if WebDAV workspace exists
-							const workspaceFolders = vscode.workspace.workspaceFolders || [];
-							const hasWebdavWorkspace = workspaceFolders.some(folder => folder.uri.scheme === 'webdav');
-							
-							if (!hasWebdavWorkspace) {
-								debugLog('No WebDAV workspace found, skipping stub file pre-load');
-								return;
-							}
-							
-							const stubUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
-							
-							// First verify the file exists through our file system provider
-							const realProvider = globalPlaceholderProvider?.getRealProvider();
-							if (realProvider && realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
-								// Try to open the document invisibly to register it with VS Code
-								const document = await vscode.workspace.openTextDocument(stubUri);
-								debugLog('Pre-loaded stub file for go-to-definition support', { 
-									uri: stubUri.toString(),
-									documentLength: document.getText().length
-								});
-								
-								// Close the document again since we just wanted to register it
-								await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-							} else {
-								debugLog('Virtual stub file not found in provider');
-							}
-						} catch (error: any) {
-							debugLog('Failed to pre-load stub file', { 
-								error: error.message,
-								errorName: error.name,
-								stack: error.stack 
-							});
-						}
-					}, 3000); // Wait 3 seconds to ensure everything is ready
-					
-					// Add stub file to php.stubs configuration using relative path only
-					// Avoid webdav:// URIs in PHP configuration to prevent path resolution issues
-					const phpConfig = vscode.workspace.getConfiguration('php');
-					const phpStubs = phpConfig.get('stubs', []) as string[];
-					const relativeStubPath = '.stubs/plugin-api.stubs.php';
-					
-					// Ensure "*" is included (DEVSENSE shortcut for all default stubs)
-					if (!phpStubs.includes('*')) {
-						phpStubs.unshift('*');
-					}
-					
-					// Only use relative path to avoid URI resolution issues
-					if (!phpStubs.includes(relativeStubPath)) {
-						phpStubs.push(relativeStubPath);
-						phpConfig.update('stubs', phpStubs, vscode.ConfigurationTarget.Workspace).then(() => {
-							debugLog('Added virtual PHP stub file to php.stubs configuration', { 
-								relativePath: relativeStubPath,
-								allStubs: phpStubs
-							});
-						}, (error: any) => {
-							debugLog('Failed to update php.stubs configuration', { error: error.message });
-						});
-					}
-					
-					// Also try to configure Intelephense if available
-					const intelephenseConfig = vscode.workspace.getConfiguration('intelephense');
-					if (intelephenseConfig) {
-						// Add the virtual WebDAV data/persistent path to environment.includePaths
-						// Use relative path only to avoid URI resolution issues
-						const includePaths = intelephenseConfig.get('environment.includePaths', []) as string[];
-						const relativeDataPath = '.stubs';
-						
-						if (!includePaths.includes(relativeDataPath)) {
-							includePaths.push(relativeDataPath);
-							intelephenseConfig.update('environment.includePaths', includePaths, vscode.ConfigurationTarget.Workspace).then(() => {
-								debugLog('Added virtual WebDAV .stubs path to Intelephense include paths', { includePaths });
-							}, (error: any) => {
-								debugLog('Failed to update Intelephense include paths', { error: error.message });
-							});
-						}
-					}
-					
-					// Configure PHP Tools (DEVSENSE) workspace.includePath
-					try {
-						const phpToolsConfig = vscode.workspace.getConfiguration('php');
-						
-						// Get all PHP files from the file index to add to workspace.includePath
-						if (globalFileIndex) {
-							setTimeout(async () => {
-								const allPhpFiles = globalFileIndex.getAllFiles().filter(file => 
-									file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
-								);
-								
-								// Get current workspace.includePath
-								const currentIncludePaths = phpToolsConfig.get('workspace.includePath', []) as string[];
-								
-								// Add all PHP files and the stubs directory to includePath
-								const newIncludePaths = new Set([...currentIncludePaths]);
-								
-								// Add stubs directory
-								newIncludePaths.add('.stubs');
-								
-								// Add each PHP file path (use directory paths, not individual files for performance)
-								const phpDirectories = new Set<string>();
-								allPhpFiles.forEach(file => {
-									const dir = file.substring(0, file.lastIndexOf('/'));
-									if (dir && dir !== '.') {
-										phpDirectories.add(dir);
-									}
-								});
-								
-								// Add unique directories containing PHP files
-								phpDirectories.forEach(dir => newIncludePaths.add(dir));
-								
-								const finalIncludePaths = Array.from(newIncludePaths).join(';');
-								
-								await phpToolsConfig.update('workspace.includePath', finalIncludePaths, vscode.ConfigurationTarget.Workspace);
-								
-								debugLog('Updated PHP Tools workspace.includePath', { 
-									includePath: finalIncludePaths,
-									phpDirectoryCount: phpDirectories.size,
-									totalPhpFiles: allPhpFiles.length
-								});
-							}, 2000); // Wait for file index to be populated
-						}
-					} catch (error: any) {
-						debugLog('Failed to configure PHP Tools workspace.includePath', { error: error.message });
-					}
-					
-					debugLog('Virtual PHP stub file registered for autocompletion', { 
-						relativePath: relativeStubPath
-					});
+					await virtualFileManager.createStubFile();
+					logger.info('Virtual PHP stub file created successfully');
 				} catch (error: any) {
-					debugLog('Failed to create virtual stub file', { error: error.message });
+					logger.exception('Failed to create virtual stub file', error);
 					// Continue without the stub file
 				}
 			};
@@ -477,451 +331,36 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(documentWillSaveHandler);
 
-	const showDebugCommand = vscode.commands.registerCommand('automate-webdav.showDebug', () => {
-		debugOutput.show();
-	});
+	// Register commands using command manager
+	const showDebugCommand = commandManager.registerCommand('automate-webdav.showDebug', 
+		new ShowDebugCommand(debugOutput));
+	
+	const refreshWorkspaceCommand = commandManager.registerCommand('automate-webdav.refreshWorkspace', 
+		new RefreshWorkspaceCommand(globalPlaceholderProvider));
 
-	const refreshWorkspaceCommand = vscode.commands.registerCommand('automate-webdav.refreshWorkspace', async () => {
-		debugLog('Refresh workspace command triggered');
-		
-		// Refresh the file index
-		const realProvider = globalPlaceholderProvider?.getRealProvider();
-		if (realProvider && realProvider.getFileIndex()) {
-			await realProvider.getFileIndex()?.quickIndex();
-		}
-		
-		await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-		vscode.window.showInformationMessage('WebDAV workspace refreshed and indexed');
-	});
+	const addStubFileCommand = commandManager.registerCommand('automate-webdav.addStubFile', 
+		new AddStubFileCommand(context, globalPlaceholderProvider, debugLog));
 
-	const addStubFileCommand = vscode.commands.registerCommand('automate-webdav.addStubFile', async () => {
-		debugLog('Add stub file command triggered');
-		
-		try {
-			// Check if there's a WebDAV connection
-			const realProvider = globalPlaceholderProvider?.getRealProvider();
-			if (!realProvider) {
-				debugLog('No WebDAV connection found');
-				vscode.window.showWarningMessage('No WebDAV connection found. Please connect to a WebDAV server first.');
-				return;
-			}
-			
-			const stubUri = vscode.Uri.joinPath(context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
-			
-			// Create virtual directories
-			debugLog('Creating virtual directories for stub file');
-			realProvider.createVirtualDirectory('~/.stubs');
-			
-			// Read the stub file content
-			const stubContent = await vscode.workspace.fs.readFile(stubUri);
-			debugLog('Read source stub file', { size: stubContent.length });
-			
-			// Create virtual stub file
-			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
-			
-			// Refresh the file explorer to show the new virtual files
-			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-			debugLog('File explorer refreshed to show virtual files');
-			
-			// Show success message
-			vscode.window.showInformationMessage('PHP Plugin API stub file added as virtual file in WebDAV workspace for autocompletion!');
-			debugLog('Virtual stub file created in WebDAV filesystem', { virtualPath: '~/.stubs/plugin-api.stubs.php' });
-			
-		} catch (error: any) {
-			debugLog('Failed to add virtual stub file', { error: error.message });
-			vscode.window.showErrorMessage(`Failed to add stub file: ${error.message}`);
-		}
-	});
+	const setupPhpStubsCommand = commandManager.registerCommand('automate-webdav.setupPhpStubs', 
+		new SetupPhpStubsCommand(context, globalPlaceholderProvider, globalFileIndex, phpConfigManager, debugLog));
 
-	const setupPhpStubsCommand = vscode.commands.registerCommand('automate-webdav.setupPhpStubs', async () => {
-		debugLog('Setup PHP stubs command triggered');
-		
-		try {
-			// Check if there's a WebDAV connection
-			const realProvider = globalPlaceholderProvider?.getRealProvider();
-			if (!realProvider) {
-				debugLog('No WebDAV connection found');
-				vscode.window.showWarningMessage('No WebDAV connection found. Please connect to a WebDAV server first.');
-				return;
-			}
-			
-			debugLog('Using WebDAV filesystem provider for virtual files');
-			
-			// Create virtual directories
-			debugLog('Creating virtual directories');
-			realProvider.createVirtualDirectory('~/.stubs');
-			realProvider.createVirtualDirectory('/.vscode');
-			debugLog('Virtual directories created');
-			
-			// Read the stub file from extension resources
-			const stubUri = vscode.Uri.joinPath(context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
-			debugLog('Reading source stub file', { sourcePath: stubUri.fsPath });
-			const stubContent = await vscode.workspace.fs.readFile(stubUri);
-			debugLog('Source stub file read successfully', { contentSize: stubContent.length });
-			
-			// Create virtual stub file
-			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
-			debugLog('Virtual stub file created');
-			
-			// Get all PHP files from the file index to include in settings
-			const allPhpFiles = globalFileIndex ? globalFileIndex.getAllFiles().filter(file => 
-				file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
-			) : [];
-			
-			// Create unique directories containing PHP files
-			const phpDirectories = new Set<string>();
-			allPhpFiles.forEach(file => {
-				const dir = file.substring(0, file.lastIndexOf('/'));
-				if (dir && dir !== '.' && dir !== '') {
-					phpDirectories.add(dir.startsWith('/') ? dir.substring(1) : dir);
-				}
-			});
-			
-			// Add stubs directory
-			phpDirectories.add('.stubs');
-			
-			// Prepare settings content with all PHP directories
-			const settingsContent = {
-				"php.stubs": [
-					"*",
-					".stubs/plugin-api.stubs.php"
-				],
-				"php.workspace.includePath": Array.from(phpDirectories).join(';'),
-				"intelephense.environment.includePaths": Array.from(phpDirectories)
-			};
-			debugLog('Prepared settings content', { settingsContent });
-			
-			// Check if virtual settings.json already exists
-			let existingSettings: any = {};
-			const existingVirtualFile = realProvider.getVirtualFile('/.vscode/settings.json');
-			if (existingVirtualFile) {
-				try {
-					const decoder = new TextDecoder();
-					const existingText = decoder.decode(existingVirtualFile.content);
-					existingSettings = JSON.parse(existingText);
-					debugLog('Successfully read existing virtual settings.json', { 
-						existingKeys: Object.keys(existingSettings),
-						existingSize: existingText.length
-					});
-				} catch (error: any) {
-					debugLog('Failed to parse existing virtual settings.json', { error: error.message });
-				}
-			} else {
-				debugLog('No existing virtual settings.json found');
-			}
-			
-			// Merge with existing settings
-			const mergedSettings = {
-				...existingSettings,
-				...settingsContent
-			};
-			debugLog('Merged settings prepared', { 
-				totalKeys: Object.keys(mergedSettings).length,
-				phpStubsCount: mergedSettings['php.stubs']?.length || 0
-			});
-			
-			// Create virtual settings.json file
-			const settingsJson = JSON.stringify(mergedSettings, null, 2);
-			const encoder = new TextEncoder();
-			const settingsContentBytes = encoder.encode(settingsJson);
-			
-			debugLog('Creating virtual settings.json', { 
-				settingsSize: settingsJson.length 
-			});
-			
-			realProvider.createVirtualFile('/.vscode/settings.json', settingsContentBytes);
-			debugLog('Virtual settings.json created');
-			
-			// Update VS Code configuration programmatically
-			const phpConfig = vscode.workspace.getConfiguration('php');
-			const currentStubs = phpConfig.get('stubs', []) as string[];
-			const newStubs = [...new Set([...currentStubs, '*', '.stubs/plugin-api.stubs.php'])];
-			
-			await phpConfig.update('stubs', newStubs, vscode.ConfigurationTarget.Workspace);
-			debugLog('Updated VS Code php.stubs configuration', { newStubs });
-			
-			// Configure PHP Tools workspace.includePath for all PHP files
-			try {
-				// Get all PHP files from the file index
-				if (globalFileIndex) {
-					setTimeout(async () => {
-						const allPhpFiles = globalFileIndex.getAllFiles().filter(file => 
-							file.endsWith('.php') || file.endsWith('.phtml') || file.endsWith('.inc')
-						);
-						
-						// Get current workspace.includePath - handle both array and string formats
-						let currentIncludePaths: string[] = [];
-						const currentConfig = phpConfig.get('workspace.includePath', [] as any);
-						if (Array.isArray(currentConfig)) {
-							currentIncludePaths = currentConfig;
-						} else if (typeof currentConfig === 'string') {
-							currentIncludePaths = currentConfig.split(';').filter((p: string) => p.trim());
-						}
-						
-						// Add all PHP files and the stubs directory to includePath
-						const newIncludePaths = new Set([...currentIncludePaths]);
-						
-						// Add stubs directory
-						newIncludePaths.add('.stubs');
-						
-						// Add each PHP file path (use directory paths, not individual files for performance)
-						const phpDirectories = new Set<string>();
-						allPhpFiles.forEach(file => {
-							const dir = file.substring(0, file.lastIndexOf('/'));
-							if (dir && dir !== '.' && dir !== '') {
-								phpDirectories.add(dir.startsWith('/') ? dir.substring(1) : dir);
-							}
-						});
-						
-						// Add unique directories containing PHP files
-						phpDirectories.forEach(dir => newIncludePaths.add(dir));
-						
-						// Convert to semicolon-separated string as required by PHP Tools
-						const finalIncludePaths = Array.from(newIncludePaths).filter(p => p.trim()).join(';');
-						
-						await phpConfig.update('workspace.includePath', finalIncludePaths, vscode.ConfigurationTarget.Workspace);
-						
-						debugLog('Updated PHP Tools workspace.includePath in setupPhpStubsCommand', { 
-							includePath: finalIncludePaths,
-							phpDirectoryCount: phpDirectories.size,
-							totalPhpFiles: allPhpFiles.length
-						});
-					}, 1000); // Wait for file index to be populated
-				}
-			} catch (error: any) {
-				debugLog('Failed to configure PHP Tools workspace.includePath in setupPhpStubsCommand', { error: error.message });
-			}
-			
-			// Refresh the file explorer to show the new virtual files
-			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-			debugLog('File explorer refreshed to show virtual files');
-			
-			// Show success message
-			vscode.window.showInformationMessage('PHP stub configuration setup complete! Virtual files created in WebDAV workspace.');
-			debugLog('PHP stub configuration setup complete', { 
-				virtualStubPath: '~/.stubs/plugin-api.stubs.php',
-				virtualSettingsPath: '/.vscode/settings.json',
-				stubSize: stubContent.length,
-				settingsSize: settingsJson.length
-			});
-			
-		} catch (error: any) {
-			debugLog('Failed to setup PHP stubs configuration', { 
-				error: error.message,
-				stack: error.stack,
-				name: error.name
-			});
-			vscode.window.showErrorMessage(`Failed to setup PHP stubs: ${error.message}`);
-		}
-	});
+	const testVirtualFileCommand = commandManager.registerCommand('automate-webdav.testVirtualFile', 
+		new TestVirtualFileCommand(globalPlaceholderProvider, debugLog));
 
-	const testVirtualFileCommand = vscode.commands.registerCommand('automate-webdav.testVirtualFile', async () => {
-		debugLog('Test virtual file command triggered');
-		
-		try {
-			// Check if there's a WebDAV connection
-			const realProvider = globalPlaceholderProvider?.getRealProvider();
-			if (!realProvider) {
-				debugLog('No WebDAV connection found');
-				vscode.window.showWarningMessage('No WebDAV connection found. Please connect to a WebDAV server first.');
-				return;
-			}
-			
-			debugLog('Creating test virtual file');
-			
-			// Create a simple test file in the root
-			const testContent = new TextEncoder().encode('This is a test virtual file!\nCreated by WebDAV extension.');
-			realProvider.createVirtualFile('/test-virtual-file.txt', testContent);
-			
-			// Create a test directory with a file
-			realProvider.createVirtualDirectory('/test-dir');
-			realProvider.createVirtualFile('/test-dir/nested-file.txt', new TextEncoder().encode('Nested virtual file content'));
-			
-			debugLog('Virtual files created', {
-				rootFile: '/test-virtual-file.txt',
-				directory: '/test-dir',
-				nestedFile: '/test-dir/nested-file.txt',
-				virtualFileCount: realProvider.getVirtualFileCount()
-			});
-			
-			// Force refresh the file explorer and try to open the WebDAV workspace
-			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-			
-			// Try to open the WebDAV workspace if it's not already open
-			const webdavUri = vscode.Uri.parse('webdav:/');
-			const workspaceFolders = vscode.workspace.workspaceFolders || [];
-			const hasWebdavWorkspace = workspaceFolders.some(folder => folder.uri.scheme === 'webdav');
-			
-			if (!hasWebdavWorkspace) {
-				debugLog('Adding WebDAV workspace to VS Code');
-				try {
-					// Try to add the WebDAV root as a workspace folder
-					const added = vscode.workspace.updateWorkspaceFolders(
-						workspaceFolders.length, 
-						0, 
-						{ uri: webdavUri, name: 'WebDAV' }
-					);
-					if (added) {
-						debugLog('Successfully added WebDAV workspace folder');
-					} else {
-						debugLog('Failed to add WebDAV workspace folder');
-					}
-				} catch (error: any) {
-					debugLog('Error adding WebDAV workspace folder', { error: error.message });
-				}
-			} else {
-				debugLog('WebDAV workspace already exists');
-			}
-			
-			// Refresh the file explorer to show the new virtual files
-			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-			debugLog('File explorer refreshed to show virtual files');
-			
-			vscode.window.showInformationMessage('Test virtual files created! Check the file explorer.');
-			
-		} catch (error: any) {
-			debugLog('Failed to create test virtual files', { error: error.message });
-			vscode.window.showErrorMessage(`Failed to create test virtual files: ${error.message}`);
-		}
-	});
+	const testGoToDefinitionCommand = commandManager.registerCommand('automate-webdav.testGoToDefinition', 
+		new TestGoToDefinitionCommand(globalPlaceholderProvider, globalStubFileCreator, debugLog));
 
-	const testGoToDefinitionCommand = vscode.commands.registerCommand('automate-webdav.testGoToDefinition', async () => {
-		debugLog('Test go-to-definition command triggered');
-		
-		try {
-			// Test opening the stub file directly
-			const stubUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
-			debugLog('Testing direct opening of stub file', { uri: stubUri.toString() });
-			
-			// Check if WebDAV provider is available
-			const realProvider = globalPlaceholderProvider?.getRealProvider();
-			if (!realProvider) {
-				vscode.window.showWarningMessage('No WebDAV connection found. Please connect to WebDAV first.');
-				return;
-			}
-			
-			// Check if stub file exists
-			if (!realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
-				vscode.window.showWarningMessage('Stub file not found. Creating it now...');
-				if (globalStubFileCreator) {
-					await globalStubFileCreator();
-					vscode.window.showInformationMessage('Stub file created. Try again.');
-				}
-				return;
-			}
-			
-			// Try to open the document
-			const document = await vscode.workspace.openTextDocument(stubUri);
-			await vscode.window.showTextDocument(document);
-			
-			vscode.window.showInformationMessage('Stub file opened successfully! Go-to-definition should work now.');
-			debugLog('Successfully opened stub file for testing', {
-				uri: stubUri.toString(),
-				lineCount: document.lineCount,
-				languageId: document.languageId
-			});
-			
-		} catch (error: any) {
-			debugLog('Failed to test go-to-definition', { error: error.message, stack: error.stack });
-			vscode.window.showErrorMessage(`Failed to test go-to-definition: ${error.message}`);
-		}
-	});
+	const searchFilesCommand = commandManager.registerCommand('automate-webdav.searchFiles', 
+		new SearchFilesCommand(globalCustomSearchProvider, debugLog));
 
-	const searchFilesCommand = vscode.commands.registerCommand('automate-webdav.searchFiles', async () => {
-		debugLog('Search files command triggered');
-		await globalCustomSearchProvider.showFileSearchQuickPick();
-	});
+	const searchTextCommand = commandManager.registerCommand('automate-webdav.searchText', 
+		new SearchTextCommand(globalCustomSearchProvider, debugLog));
 
-	const searchTextCommand = vscode.commands.registerCommand('automate-webdav.searchText', async () => {
-		debugLog('Search text command triggered');
-		await globalCustomSearchProvider.showTextSearchQuickPick();
-	});
+	const searchSymbolsCommand = commandManager.registerCommand('automate-webdav.searchSymbols', 
+		new SearchSymbolsCommand(globalCustomSearchProvider, debugLog));
 
-	const searchSymbolsCommand = vscode.commands.registerCommand('automate-webdav.searchSymbols', async () => {
-		debugLog('Search symbols command triggered');
-		await globalCustomSearchProvider.showSymbolSearchQuickPick();
-	});
-
-	const debugFileSystemCommand = vscode.commands.registerCommand('automate-webdav.debugFileSystem', async () => {
-		debugLog('Debug file system command triggered');
-		
-		try {
-			const realProvider = globalPlaceholderProvider?.getRealProvider();
-			debugLog('File system debug info', {
-				hasPlaceholderProvider: !!globalPlaceholderProvider,
-				hasRealProvider: !!realProvider,
-				virtualFileCount: realProvider?.getVirtualFileCount() || 0,
-				hasFileIndex: !!globalFileIndex
-			});
-			
-			// Debug virtual file storage
-			if (realProvider) {
-				// Check what's actually stored in the virtual files map
-				const virtualFileDebug = (realProvider as any)._virtualFiles as Map<string, any>;
-				if (virtualFileDebug) {
-					const storedKeys = Array.from(virtualFileDebug.keys());
-					debugLog('Virtual files stored in provider', {
-						storedKeys,
-						totalFiles: storedKeys.length
-					});
-					
-					// Check specifically for our stub file
-					const stubPath = '~/.stubs/plugin-api.stubs.php';
-					const hasStubFile = virtualFileDebug.has(stubPath);
-					debugLog('Stub file storage check', {
-						path: stubPath,
-						exists: hasStubFile,
-						stubKeys: storedKeys.filter(key => key.includes('stubs'))
-					});
-				}
-			}
-			
-			// Test if file system provider is working
-			try {
-				const testUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
-				debugLog('Testing access to stub file', { 
-					uri: testUri.toString(),
-					path: testUri.path,
-					scheme: testUri.scheme
-				});
-				
-				if (realProvider && realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
-					debugLog('Virtual stub file exists in provider');
-					
-					// Try to read the file
-					const content = await realProvider.readFile(testUri);
-					debugLog('Successfully read stub file', { size: content.length });
-					
-					vscode.window.showInformationMessage(`Stub file accessible: ${content.length} bytes. File system is working correctly.`);
-				} else {
-					debugLog('Virtual stub file not found in provider');
-					vscode.window.showWarningMessage('Virtual stub file not found. Try connecting to WebDAV first.');
-				}
-			} catch (error: any) {
-				debugLog('Error accessing stub file directly', { error: error.message, stack: error.stack });
-				vscode.window.showErrorMessage(`Error accessing stub file: ${error.message}`);
-			}
-			
-			// Check file index contents
-			if (globalFileIndex) {
-				const allIndexedFiles = globalFileIndex.getAllIndexedFiles();
-				const indexSize = globalFileIndex.getIndexSize();
-				debugLog('File index contents', {
-					indexSize,
-					totalIndexedFiles: allIndexedFiles.length,
-					indexedFiles: allIndexedFiles.map(f => ({ 
-						path: f.path, 
-						name: f.name, 
-						isDirectory: f.isDirectory 
-					}))
-				});
-			}
-			
-		} catch (error: any) {
-			debugLog('Debug file system failed', { error: error.message });
-			vscode.window.showErrorMessage(`Debug failed: ${error.message}`);
-		}
-	});
+	const debugFileSystemCommand = commandManager.registerCommand('automate-webdav.debugFileSystem', 
+		new DebugFileSystemCommand(globalPlaceholderProvider, globalFileIndex, debugLog));
 
 	context.subscriptions.push(showDebugCommand);
 	context.subscriptions.push(refreshWorkspaceCommand);

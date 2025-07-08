@@ -326,7 +326,7 @@ export class WebDAVDocumentSymbolProvider implements vscode.DocumentSymbolProvid
 		parentKey: string, 
 		depth: number
 	): void {
-		if (depth > 3) return; // Prevent infinite recursion
+		if (depth > 3) {return;} // Prevent infinite recursion
 
 		for (const key in obj) {
 			const value = obj[key];

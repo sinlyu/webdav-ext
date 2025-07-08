@@ -1,16 +1,14 @@
 import * as vscode from 'vscode';
 import { WebDAVCredentials } from '../types';
 import { WebDAVFileIndex } from '../core/fileIndex';
-import { CacheManager } from '../core/cacheManager';
-import { CacheWarmingService } from '../core/cacheWarmingService';
+import { WebDAVCache } from '../core/simpleCache';
 import { WebDAVApi } from '../core/webdavApi';
 
 export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
 	private _credentials: WebDAVCredentials | null = null;
 	private _fileIndex: WebDAVFileIndex | null = null;
-	private _cacheManager: CacheManager | null = null;
-	private _cacheWarmingService: CacheWarmingService | null = null;
+	private _cache: WebDAVCache | null = null;
 	private _debugLog: (message: string, data?: any) => void = () => {};
 	private _virtualFiles = new Map<string, { content: Uint8Array; mtime: number; isDirectory: boolean }>();
 	private _isInitialized = false;
@@ -21,16 +19,13 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 	constructor(credentials: WebDAVCredentials, context?: vscode.ExtensionContext) {
 		this._credentials = credentials;
 		this._webdavApi = new WebDAVApi(credentials, this._debugLog);
-		
-		if (context) {
-			this._cacheManager = new CacheManager(context, credentials, this._debugLog);
-		}
+		this._cache = new WebDAVCache();
 	}
 
 	setFileIndex(fileIndex: WebDAVFileIndex | null) {
 		this._fileIndex = fileIndex;
-		if (this._fileIndex && this._cacheManager) {
-			this._fileIndex.setCacheManager(this._cacheManager);
+		if (this._fileIndex && this._cache) {
+			this._fileIndex.setCache(this._cache);
 		}
 	}
 
@@ -38,10 +33,10 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		return this._fileIndex;
 	}
 
-	setCacheManager(cacheManager: CacheManager) {
-		this._cacheManager = cacheManager;
+	setCache(cache: WebDAVCache) {
+		this._cache = cache;
 		if (this._fileIndex) {
-			this._fileIndex.setCacheManager(cacheManager);
+			this._fileIndex.setCache(cache);
 		}
 	}
 
@@ -50,14 +45,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		if (this._credentials) {
 			this._webdavApi = new WebDAVApi(this._credentials, logger);
 		}
-		if (this._cacheManager) {
-			// Update cache manager's debug logger
-			this._cacheManager = new CacheManager(
-				(this._cacheManager as any).context,
-				this._credentials,
-				logger
-			);
-		}
+		// Simple cache doesn't need logger updates
 	}
 
 
@@ -66,38 +54,18 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			return;
 		}
 
-		this._debugLog('Initializing WebDAV file system provider with caching');
+		this._debugLog('Initializing WebDAV file system provider with simple caching');
 
 		try {
-			// Initialize cache warming service
-			if (this._cacheManager && this._credentials) {
-				this._cacheWarmingService = new CacheWarmingService(
-					this._credentials,
-					this._cacheManager,
-					{
-						propFind: (path: string) => this.propFindRequest(path),
-						getFile: (path: string) => this.getFileRequest(path)
-					},
-					this._debugLog
-				);
-			}
-
-			// Start quick indexing for immediate workspace availability
+			// Start full recursive indexing for complete directory caching on startup
 			if (this._fileIndex) {
-				this._fileIndex.quickIndex().catch(error => {
-					this._debugLog('Quick index failed', { error });
-				});
-			}
-
-			// Start cache warming in background
-			if (this._cacheWarmingService) {
-				this._cacheWarmingService.startWarmingForWorkspace().catch(error => {
-					this._debugLog('Cache warming failed', { error });
+				this._fileIndex.rebuildIndex().catch(error => {
+					this._debugLog('Full recursive index failed', { error });
 				});
 			}
 
 			this._isInitialized = true;
-			this._debugLog('WebDAV file system provider initialized');
+			this._debugLog('WebDAV file system provider initialized with full recursive caching');
 
 		} catch (error) {
 			this._debugLog('Failed to initialize WebDAV file system provider', { error });
@@ -251,6 +219,47 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			const fileName = this.getFileName(path);
 			this._debugLog('stat() getting parent directory', { parentPath, fileName });
 			
+			// Check if parent directory is cached first
+			if (this._cache) {
+				// Try multiple path formats to find cache entry
+				const pathsToTry = [
+					parentPath,                          // /
+					parentPath.substring(1),             // '' (remove leading slash)
+					parentPath === '/' ? '' : parentPath  // Handle root specially
+				].filter((path, index, arr) => arr.indexOf(path) === index); // Remove duplicates
+
+				let cached: any[] | undefined;
+				let usedPath: string | undefined;
+
+				for (const tryPath of pathsToTry) {
+					cached = this._cache.getDirectory(tryPath);
+					if (cached) {
+						usedPath = tryPath;
+						break;
+					}
+				}
+
+				this._debugLog('stat() cache lookup', { 
+					parentPath, 
+					pathsToTry,
+					cacheHit: !!cached, 
+					usedPath,
+					cacheSize: cached?.length || 0 
+				});
+				if (cached) {
+					const item = cached.find(entry => entry.name === fileName);
+					if (item) {
+						this._debugLog('stat() found in cache', { fileName, isDirectory: item.type === vscode.FileType.Directory });
+						return {
+							type: item.type,
+							ctime: item.mtime,
+							mtime: item.mtime,
+							size: item.size
+						};
+					}
+				}
+			}
+			
 			if (!this._webdavApi) {
 				throw vscode.FileSystemError.FileNotFound('WebDAV API not initialized');
 			}
@@ -290,8 +299,33 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		
 		try {
 			// Check cache first
-			if (this._cacheManager) {
-				const cached = await this._cacheManager.getDirectory(currentPath);
+			if (this._cache) {
+				// Try multiple path formats to find cache entry
+				const pathsToTry = [
+					currentPath,                          // /plugins
+					currentPath.substring(1),             // plugins (remove leading slash)
+					currentPath === '/' ? '' : currentPath  // Handle root specially
+				].filter((path, index, arr) => arr.indexOf(path) === index); // Remove duplicates
+
+				let cached: any[] | undefined;
+				let usedPath: string | undefined;
+
+				for (const tryPath of pathsToTry) {
+					cached = this._cache.getDirectory(tryPath);
+					if (cached) {
+						usedPath = tryPath;
+						break;
+					}
+				}
+
+				this._debugLog('Cache lookup attempt', { 
+					path: currentPath, 
+					pathsToTry,
+					cacheHit: !!cached, 
+					usedPath,
+					cacheSize: cached?.length || 0,
+					cacheStats: this._cache.getStats()
+				});
 				if (cached && cached.length > 0) {
 					result = cached.map(entry => [
 						entry.name,
@@ -300,6 +334,8 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 					this._debugLog('Directory cache hit', { path: currentPath, count: result.length });
 				} else if (cached) {
 					this._debugLog('Directory cache hit but empty', { path: currentPath });
+				} else {
+					this._debugLog('Directory cache miss', { path: currentPath });
 				}
 			}
 
@@ -314,15 +350,26 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 					this._debugLog('Real WebDAV files found via API', { count: result.length });
 					
 					// Update cache with new directory listing
-					if (this._cacheManager && response.items.length > 0) {
+					if (this._cache && response.items.length > 0) {
 						const cacheEntries = response.items.map(item => ({
 							name: item.name,
 							type: item.isDirectory ? vscode.FileType.Directory : vscode.FileType.File,
 							size: parseInt(item.size) || 0,
 							mtime: Date.now()
 						}));
-						await this._cacheManager.setDirectory(currentPath, cacheEntries);
-						this._debugLog('Updated directory cache', { path: currentPath, entries: cacheEntries.length });
+						
+						// Store with both path formats for consistency
+						const normalizedPath = currentPath.startsWith('/') ? currentPath.substring(1) : currentPath;
+						const pathWithSlash = currentPath.startsWith('/') ? currentPath : `/${currentPath}`;
+						
+						this._cache.setDirectory(normalizedPath, cacheEntries);
+						this._cache.setDirectory(pathWithSlash, cacheEntries);
+						this._debugLog('Updated directory cache', { 
+							path: currentPath, 
+							normalizedPath, 
+							pathWithSlash,
+							entries: cacheEntries.length 
+						});
 					}
 				} else {
 					this._debugLog('Failed to get directory listing via API', { error: response.error });
@@ -371,15 +418,7 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			}
 		}
 		
-		// Queue subdirectories for background warming
-		if (this._cacheWarmingService) {
-			result.forEach(([name, type]) => {
-				if (type === vscode.FileType.Directory) {
-					const subPath = `${currentPath}/${name}`.replace(/\/+/g, '/');
-					this._cacheWarmingService!.queuePath(subPath);
-				}
-			});
-		}
+		// Simple cache doesn't need background warming
 		
 		this._debugLog('readDirectory() final result', { 
 			path: currentPath,
@@ -414,8 +453,8 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		}
 		
 		// Invalidate parent directory cache since it now has a new child
-		if (this._cacheManager) {
-			await this._cacheManager.deleteDirectory(dirPath);
+		if (this._cache) {
+			this._cache.deleteDirectory(dirPath);
 			this._debugLog('Invalidated parent directory cache after creation', { dirPath });
 		}
 		
@@ -478,8 +517,8 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		}
 
 		// Check cache for real files
-		if (this._cacheManager) {
-			const cached = await this._cacheManager.getFile(path);
+		if (this._cache) {
+			const cached = this._cache.getFile(path);
 			if (cached) {
 				this._debugLog('File cache hit', { path, size: cached.length });
 				return cached;
@@ -499,14 +538,8 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		}
 
 		// Cache the file content
-		if (this._cacheManager) {
-			const metadata = {
-				size: response.content.length,
-				mtime: Date.now(),
-				etag: response.headers.etag || undefined,
-				contentType: response.headers['content-type'] || undefined
-			};
-			await this._cacheManager.setFile(path, response.content, metadata);
+		if (this._cache) {
+			this._cache.setFile(path, response.content);
 			this._debugLog('Cached file content', { path, size: response.content.length });
 		}
 
@@ -549,14 +582,9 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 		}
 		
 		// Update cache for the file and invalidate parent directory
-		if (this._cacheManager) {
-			const metadata = {
-				size: content.length,
-				mtime: Date.now(),
-				contentType: 'application/octet-stream'
-			};
-			await this._cacheManager.setFile(path, content, metadata);
-			await this._cacheManager.deleteDirectory(dirPath); // Parent directory changed
+		if (this._cache) {
+			this._cache.setFile(path, content);
+			this._cache.deleteDirectory(dirPath); // Parent directory changed
 			this._debugLog('Updated cache after file write', { path, size: content.length, invalidatedDir: dirPath });
 		}
 		
@@ -591,9 +619,9 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			}
 			
 			// Invalidate cache
-			if (this._cacheManager) {
+			if (this._cache) {
+				this._cache.deleteFile(path);
 				this._debugLog('Deleted file from cache', { path });
-					await this._cacheManager.deleteFile(path);
 			}
 		}
 		
@@ -632,11 +660,11 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			}
 			
 			// Invalidate cache for both old and new paths
-			if (this._cacheManager) {
-				await this._cacheManager.deleteFile(oldPath);
-			await this._cacheManager.deleteFile(newPath);
-			this._debugLog('Invalidated cache for renamed file', { oldPath, newPath });
-				}
+			if (this._cache) {
+				this._cache.deleteFile(oldPath);
+				this._cache.deleteFile(newPath);
+				this._debugLog('Invalidated cache for renamed file', { oldPath, newPath });
+			}
 		}
 		
 		this._emitter.fire([
@@ -721,40 +749,23 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 
 	// Cache management methods
 	getCacheStats(): any {
-		if (!this._cacheManager) {
+		if (!this._cache) {
 			return null;
 		}
-		return this._cacheManager.getCacheStats();
-	}
-
-	getCacheWarmingStatus(): any {
-		if (!this._cacheWarmingService) {
-			return null;
-		}
-		return this._cacheWarmingService.getWarmingStatus();
+		return this._cache.getStats();
 	}
 
 	async clearCache(): Promise<void> {
-		if (this._cacheManager) {
-			await this._cacheManager.clearCache();
+		if (this._cache) {
+			this._cache.clear();
 			this._debugLog('Cache cleared by user request');
-		}
-	}
-
-	stopCacheWarming(): void {
-		if (this._cacheWarmingService) {
-			this._cacheWarmingService.stopWarming();
-			this._debugLog('Cache warming stopped by user request');
 		}
 	}
 
 	// Dispose method to clean up resources
 	dispose(): void {
-		if (this._cacheManager) {
-			this._cacheManager.dispose();
-		}
-		if (this._cacheWarmingService) {
-			this._cacheWarmingService.dispose();
+		if (this._cache) {
+			this._cache.dispose();
 		}
 		this._debugLog('WebDAV file system provider disposed');
 	}

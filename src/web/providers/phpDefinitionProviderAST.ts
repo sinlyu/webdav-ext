@@ -418,7 +418,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 	}
 
 	private extractSymbolsFromAST(node: any, symbols: PHPSymbol[], filePath: string, namespace?: string, className?: string): void {
-		if (!node) return;
+		if (!node) {return;}
 
 		try {
 			switch (node.kind) {
@@ -595,7 +595,7 @@ export class PHPDefinitionProviderAST implements IPHPDefinitionProvider {
 				inPhpTag = true;
 				continue;
 			}
-			if (!inPhpTag) continue;
+			if (!inPhpTag) {continue;}
 			if (line.includes('?>')) {
 				inPhpTag = false;
 				continue;
