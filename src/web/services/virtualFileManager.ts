@@ -37,7 +37,7 @@ export class VirtualFileManager {
 			
 			// Create virtual directories and files
 			realProvider.createVirtualDirectory('~/.stubs');
-			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
+			realProvider.createVirtualFile('~/.stubs/automate.meta.php', stubContent);
 			
 			this.logger.info('Created virtual PHP stub file in WebDAV filesystem', { size: stubContent.length });
 			
@@ -123,7 +123,7 @@ export class VirtualFileManager {
 	 * Load stub file content from extension resources
 	 */
 	private async loadStubContent(): Promise<Uint8Array> {
-		const stubUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
+		const stubUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'web', 'resources', 'automate.meta.php');
 		return await vscode.workspace.fs.readFile(stubUri);
 	}
 
@@ -131,7 +131,7 @@ export class VirtualFileManager {
 	 * Configure PHP extensions to use the stub file
 	 */
 	private async configurePhpExtensions(): Promise<void> {
-		const relativeStubPath = '.stubs/plugin-api.stubs.php';
+		const relativeStubPath = '.stubs/automate.meta.php';
 		
 		// Configure PHP stubs
 		await this.phpConfigManager.configurePhpStubs(relativeStubPath);
@@ -156,10 +156,10 @@ export class VirtualFileManager {
 					return;
 				}
 				
-				const stubUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
+				const stubUri = vscode.Uri.parse('webdav:/.stubs/automate.meta.php');
 				const realProvider = this.placeholderProvider.getRealProvider();
 				
-				if (realProvider && realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
+				if (realProvider && realProvider.hasVirtualFile('~/.stubs/automate.meta.php')) {
 					// Open the document invisibly to register it with VS Code
 					const document = await vscode.workspace.openTextDocument(stubUri);
 					
@@ -187,7 +187,7 @@ export class VirtualFileManager {
 		return {
 			"php.stubs": [
 				"*",
-				".stubs/plugin-api.stubs.php"
+				".stubs/automate.meta.php"
 			],
 			"php.workspace.includePath": Array.from(phpDirectories).join(';'),
 			"intelephense.environment.includePaths": Array.from(phpDirectories)

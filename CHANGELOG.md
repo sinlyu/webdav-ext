@@ -4,6 +4,41 @@ All notable changes to the "edoc Automate WebDAV" extension will be documented i
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-01-08
+
+### 🚀 New Features
+- **🎯 Dynamic Project Selection**: Complete overhaul of connection flow with server-side project discovery
+  - Automatic project listing from `/apps/remote/` directory
+  - Interactive project selection dropdown after credential validation
+  - Real-time project fetching based on entered credentials
+  - Improved connection UI with better user experience
+
+### 🔧 Improvements
+- **🔗 Enhanced Connection Flow**: Streamlined connection process
+  - Server URL input now accepts base server URL (no project path required)
+  - Connect button intelligently disabled until valid credentials and project selection
+  - Better error handling and user feedback during project fetching
+  - Automatic credential validation before project listing
+
+### 🛠️ Technical Changes
+- **📁 Stub File Migration**: Replaced `plugin-api.stubs.php` with `automate.meta.php`
+  - Updated all PHP IntelliSense configurations to use new meta file
+  - Improved autocompletion accuracy for edoc Automate development
+  - Enhanced go-to-definition support for platform-specific functions
+
+### 🎨 UI/UX Enhancements
+- **💡 Improved Connection Interface**: Better visual feedback and user guidance
+  - Loading states during project fetching
+  - Clear project selection workflow
+  - Enhanced error messages and validation feedback
+  - Responsive UI elements that adapt to connection state
+
+### 🐛 Bug Fixes
+- **🔧 Fixed Directory UI State**: Empty directories now properly hide expand arrows in VS Code Explorer
+  - Leveraged existing directory caching to improve tree view performance
+  - Better visual indication of empty vs populated directories
+  - Consistent UI behavior across different directory states
+
 ## [0.3.12] - 2025-01-08
 
 ### 🐛 Bug Fixes

@@ -6,6 +6,7 @@ import { WebDAVTextSearchProvider } from '../providers/textSearchProvider';
 import { IPHPDefinitionProvider } from '../providers/phpDefinitionProviderInterface';
 import { WebDAVFileIndex } from '../core/fileIndex';
 import { TemplateLoader } from './templates/templateLoader';
+import { WebDAVApi } from '../core/webdavApi';
 
 export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'webdavConnection';
@@ -62,6 +63,10 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					case 'test':
 						this.debugLog('Test message received from webview');
 						vscode.window.showInformationMessage('Webview test successful!');
+						break;
+					case 'fetchProjects':
+						this.debugLog('Processing fetchProjects message', { url: data.url, username: data.username });
+						await this.fetchProjects(data.url, data.username, data.password);
 						break;
 					case 'connect':
 						this.debugLog('Processing connect message', { url: data.url, username: data.username, project: data.project });
@@ -222,20 +227,43 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		return null;
 	}
 
+	async fetchProjects(url: string, username: string, password: string) {
+		this.debugLog('Fetching available projects', { url, username });
+		
+		try {
+			const baseUrl = this.getBaseUrl(url);
+			const response = await WebDAVApi.getProjectList(baseUrl, username, password);
+			
+			if (response.success) {
+				this.debugLog('Projects fetched successfully', { count: response.items.length });
+				this._view?.webview.postMessage({
+					type: 'projectList',
+					projects: response.items.map(item => ({ name: item.name }))
+				});
+			} else {
+				this.debugLog('Failed to fetch projects', { error: response.error });
+				this._view?.webview.postMessage({
+					type: 'projectList',
+					projects: [],
+					error: response.error || 'Failed to fetch projects'
+				});
+			}
+		} catch (error: any) {
+			this.debugLog('Error fetching projects', { error: error.message });
+			this._view?.webview.postMessage({
+				type: 'projectList',
+				projects: [],
+				error: error.message || 'Failed to fetch projects'
+			});
+		}
+	}
+
 	async connect(url: string, username: string, password: string, project?: string) {
 		this.debugLog('Starting connection process', { url, username, project });
 		
 		try {
-			// Extract project name from URL or use provided
-			let finalProject = project;
-			if (!finalProject) {
-				finalProject = this.extractProjectFromUrl(url) || undefined;
-			}
-			
-			this.debugLog('Project extraction complete', { finalProject, extractedFrom: url });
-
-			if (!finalProject) {
-				this.debugLog('No project name found, sending error');
+			if (!project) {
+				this.debugLog('No project name provided, sending error');
 				this._view?.webview.postMessage({
 					type: 'connectionError',
 					error: 'Project name is required'
@@ -245,11 +273,11 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 
 			// Clean URL to base server URL
 			const baseUrl = this.getBaseUrl(url);
-			this.debugLog('URL processing', { originalUrl: url, baseUrl, project: finalProject });
+			this.debugLog('URL processing', { originalUrl: url, baseUrl, project });
 
 			// Validate credentials by testing connection
 			this.debugLog('Validating credentials...');
-			const tempCredentials = { url: baseUrl, username, password, project: finalProject };
+			const tempCredentials = { url: baseUrl, username, password, project };
 			const isValid = await this.validateCredentials(tempCredentials);
 			
 			if (!isValid) {
@@ -280,7 +308,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			// Initialize cache warming and file system
 			await this.fsProvider.initialize();
 			
-			this.debugLog('FileSystemProvider created', { baseUrl, project: finalProject });
+			this.debugLog('FileSystemProvider created', { baseUrl, project });
 			
 			// Set the real provider in the placeholder
 			if (this.globalPlaceholderProvider) {
@@ -325,7 +353,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			this.updateWebview();
 			this.debugLog('Webview updated successfully');
 			
-			vscode.window.showInformationMessage(`Connected to edoc Automate server: ${baseUrl} (Project: ${finalProject})`);
+			vscode.window.showInformationMessage(`Connected to edoc Automate server: ${baseUrl} (Project: ${project})`);
 			this.debugOutput.show();
 			
 			return this.fsProvider;
@@ -592,7 +620,14 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	private getBaseUrl(url: string): string {
 		// Remove /apps/remote/project_name from the URL to get base server URL
 		const remotePattern = /\/apps\/remote\/[^\/\?#]+.*$/;
-		return url.replace(remotePattern, '');
+		
+		// If URL already contains /apps/remote/, remove everything after it
+		if (url.includes('/apps/remote/')) {
+			return url.replace(remotePattern, '');
+		}
+		
+		// If URL doesn't contain /apps/remote/, just return the clean URL
+		return url.replace(/\/$/, ''); // Remove trailing slash
 	}
 
 	private async validateCredentials(credentials: WebDAVCredentials): Promise<boolean> {

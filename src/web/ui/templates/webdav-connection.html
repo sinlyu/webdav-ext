@@ -63,7 +63,7 @@
 			font-size: 13px;
 			letter-spacing: 0.3px;
 		}
-		input {
+		input, select {
 			width: 100%;
 			padding: 10px 12px;
 			border: 1px solid var(--vscode-input-border);
@@ -74,11 +74,19 @@
 			box-sizing: border-box;
 			transition: all 0.2s ease;
 		}
-		input:focus {
+		input:focus, select:focus {
 			outline: none;
 			border-color: var(--vscode-focusBorder);
 			box-shadow: 0 0 0 2px var(--vscode-focusBorder);
 			transform: translateY(-1px);
+		}
+		select:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+		}
+		select option {
+			background-color: var(--vscode-dropdown-background);
+			color: var(--vscode-dropdown-foreground);
 		}
 		.btn {
 			background-color: var(--vscode-button-background);
@@ -205,7 +213,7 @@
 			<form id="webdavForm">
 				<div class="form-group">
 					<label for="url">edoc Automate Server URL</label>
-					<input type="url" id="url" placeholder="https://edoc-platform-server.com/apps/remote/project" required>
+					<input type="url" id="url" placeholder="https://edocadpsolutionsqa.westeurope.cloudapp.azure.com" required>
 					<div id="urlError" class="error hidden"></div>
 				</div>
 				<div class="form-group">
@@ -216,14 +224,16 @@
 					<label for="password">Password</label>
 					<input type="password" id="password" placeholder="Enter password" required>
 				</div>
-				<div class="form-group">
-					<label for="project">Project Name</label>
-					<input type="text" id="project" placeholder="Auto-detected or manual entry">
+				<div class="form-group" id="projectGroup" style="display: none;">
+					<label for="project">Select Project</label>
+					<select id="project" disabled>
+						<option value="">Select a project...</option>
+					</select>
 					<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 6px; padding: 6px 8px; background-color: var(--vscode-editorHoverWidget-background); border-radius: 4px; border-left: 3px solid var(--vscode-textLink-foreground);">
 						<span style="display: inline-block; width: 12px; height: 12px; background-color: var(--vscode-textLink-foreground); border-radius: 50%; margin-right: 6px; position: relative;">
 							<span style="position: absolute; top: 51%; left: 50%; transform: translate(-50%, -50%); color: var(--vscode-editor-background); font-size: 8px; font-weight: bold;">i</span>
 						</span>
-						Project name will be auto-extracted from URL if available
+						Projects are fetched from the server after entering valid credentials
 					</div>
 				</div>
 				<button type="submit" class="btn" id="connectBtn">Connect to edoc Automate</button>

@@ -408,4 +408,70 @@ export class WebDAVApi {
 	getCredentials(): WebDAVCredentials {
 		return { ...this.credentials };
 	}
+
+	/**
+	 * Gets list of available projects from the remote apps directory
+	 */
+	static async getProjectList(baseUrl: string, username: string, password: string): Promise<WebDAVDirectoryResponse> {
+		const debugLog = (message: string, data?: any) => {
+			console.log(`[WebDAVApi] ${message}`, data);
+		};
+
+		try {
+			const appsRemoteUrl = `${baseUrl}/apps/remote/`;
+			const headers = {
+				'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+				'User-Agent': 'VSCode-WebDAV-Extension',
+				'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+			};
+
+			debugLog('Fetching project list', { url: appsRemoteUrl });
+
+			const response = await fetch(appsRemoteUrl, {
+				method: 'GET',
+				headers,
+				mode: 'cors',
+				credentials: 'include'
+			});
+
+			if (!response.ok) {
+				debugLog('Failed to fetch project list', { status: response.status, statusText: response.statusText });
+				return {
+					items: [],
+					success: false,
+					error: `HTTP ${response.status}: ${response.statusText}`
+				};
+			}
+
+			const html = await response.text();
+			const items = parseDirectoryHTML(html);
+			
+			// Filter out non-directory items and system folders
+			const projects = items.filter(item => 
+				item.isDirectory && 
+				!item.name.startsWith('.') && 
+				item.name !== 'index.html' &&
+				item.name !== 'parent' &&
+				item.name !== '..'
+			);
+
+			debugLog('Project list retrieved', { 
+				totalItems: items.length,
+				projectCount: projects.length,
+				projects: projects.map(p => p.name)
+			});
+
+			return {
+				items: projects,
+				success: true
+			};
+		} catch (error: any) {
+			debugLog('Error getting project list', { error: error.message });
+			return {
+				items: [],
+				success: false,
+				error: error.message
+			};
+		}
+	}
 }

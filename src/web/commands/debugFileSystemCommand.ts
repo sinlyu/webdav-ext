@@ -34,7 +34,7 @@ export class DebugFileSystemCommand implements Command {
 					});
 					
 					// Check specifically for our stub file
-					const stubPath = '~/.stubs/plugin-api.stubs.php';
+					const stubPath = '~/.stubs/automate.meta.php';
 					const hasStubFile = virtualFileDebug.has(stubPath);
 					this.debugLog('Stub file storage check', {
 						path: stubPath,
@@ -46,14 +46,14 @@ export class DebugFileSystemCommand implements Command {
 			
 			// Test if file system provider is working
 			try {
-				const testUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
+				const testUri = vscode.Uri.parse('webdav:/.stubs/automate.meta.php');
 				this.debugLog('Testing access to stub file', { 
 					uri: testUri.toString(),
 					path: testUri.path,
 					scheme: testUri.scheme
 				});
 				
-				if (realProvider && realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
+				if (realProvider && realProvider.hasVirtualFile('~/.stubs/automate.meta.php')) {
 					this.debugLog('Virtual stub file exists in provider');
 					
 					// Try to read the file

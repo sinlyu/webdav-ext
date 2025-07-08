@@ -20,8 +20,17 @@
 		}
 		
 		const urlInput = document.getElementById('url');
+		const usernameInput = document.getElementById('username');
+		const passwordInput = document.getElementById('password');
+		
 		if (urlInput) {
-			urlInput.addEventListener('input', handleUrlChange);
+			urlInput.addEventListener('input', handleCredentialsChange);
+		}
+		if (usernameInput) {
+			usernameInput.addEventListener('input', handleCredentialsChange);
+		}
+		if (passwordInput) {
+			passwordInput.addEventListener('input', handleCredentialsChange);
 		}
 		
 		window.addEventListener('message', handleMessage);
@@ -33,9 +42,9 @@
 		const urlInput = document.getElementById('url');
 		const usernameInput = document.getElementById('username');
 		const passwordInput = document.getElementById('password');
-		const projectInput = document.getElementById('project');
+		const projectSelect = document.getElementById('project');
 		
-		if (!urlInput || !usernameInput || !passwordInput || !projectInput) {
+		if (!urlInput || !usernameInput || !passwordInput || !projectSelect) {
 			console.error('Form elements not found');
 			return;
 		}
@@ -43,15 +52,10 @@
 		const url = urlInput.value;
 		const username = usernameInput.value;
 		const password = passwordInput.value;
-		let project = projectInput.value;
+		const project = projectSelect.value;
 		
 		if (!project) {
-			const match = url.match(/\/apps\/remote\/([^\/\?#]+)/);
-			project = match ? match[1] : '';
-		}
-		
-		if (!project) {
-			showError('Project name required. Please add it to the URL or enter manually.');
+			showError('Please select a project from the dropdown.');
 			return;
 		}
 		
@@ -75,15 +79,43 @@
 		vscode.postMessage({ type: 'addToWorkspace' });
 	}
 	
-	function handleUrlChange(e) {
-		const url = e.target.value;
-		const projectField = document.getElementById('project');
+	function handleCredentialsChange() {
+		const urlInput = document.getElementById('url');
+		const usernameInput = document.getElementById('username');
+		const passwordInput = document.getElementById('password');
+		const projectGroup = document.getElementById('projectGroup');
+		const projectSelect = document.getElementById('project');
+		const connectBtn = document.getElementById('connectBtn');
 		
-		if (url && projectField && !projectField.value) {
-			const match = url.match(/\/apps\/remote\/([^\/\?#]+)/);
-			if (match) {
-				projectField.value = match[1];
-			}
+		if (!urlInput || !usernameInput || !passwordInput || !projectGroup || !projectSelect || !connectBtn) {
+			return;
+		}
+		
+		const url = urlInput.value.trim();
+		const username = usernameInput.value.trim();
+		const password = passwordInput.value.trim();
+		
+		// Check if all credentials are provided
+		if (url && username && password) {
+			// Enable project fetching
+			projectGroup.style.display = 'block';
+			projectSelect.disabled = true;
+			connectBtn.disabled = true;
+			
+			// Clear previous projects
+			projectSelect.innerHTML = '<option value="">Loading projects...</option>';
+			
+			// Fetch projects from server
+			vscode.postMessage({
+				type: 'fetchProjects',
+				url: url,
+				username: username,
+				password: password
+			});
+		} else {
+			// Hide project selection and disable connect button
+			projectGroup.style.display = 'none';
+			connectBtn.disabled = true;
 		}
 	}
 	
@@ -103,6 +135,9 @@
 				console.log('Connection error received:', message.error);
 				setLoadingState(false);
 				showError(message.error || 'Connection failed');
+				break;
+			case 'projectList':
+				handleProjectList(message.projects, message.error);
 				break;
 		}
 	}
@@ -172,6 +207,49 @@
 		if (urlError) {
 			urlError.classList.add('hidden');
 		}
+	}
+	
+	function handleProjectList(projects, error) {
+		const projectSelect = document.getElementById('project');
+		const connectBtn = document.getElementById('connectBtn');
+		
+		if (!projectSelect || !connectBtn) {
+			return;
+		}
+		
+		if (error) {
+			projectSelect.innerHTML = '<option value="">Failed to load projects</option>';
+			projectSelect.disabled = true;
+			connectBtn.disabled = true;
+			showError(error);
+			return;
+		}
+		
+		if (!projects || projects.length === 0) {
+			projectSelect.innerHTML = '<option value="">No projects found</option>';
+			projectSelect.disabled = true;
+			connectBtn.disabled = true;
+			showError('No projects found on the server');
+			return;
+		}
+		
+		// Populate project dropdown
+		projectSelect.innerHTML = '<option value="">Select a project...</option>';
+		projects.forEach(project => {
+			const option = document.createElement('option');
+			option.value = project.name;
+			option.textContent = project.name;
+			projectSelect.appendChild(option);
+		});
+		
+		projectSelect.disabled = false;
+		
+		// Enable connect button when a project is selected
+		projectSelect.addEventListener('change', function() {
+			connectBtn.disabled = !this.value;
+		});
+		
+		hideError();
 	}
 	
 	// Initialize when DOM is ready

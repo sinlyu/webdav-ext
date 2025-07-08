@@ -34,13 +34,13 @@ export class SetupPhpStubsCommand implements Command {
 			this.debugLog('Virtual directories created');
 			
 			// Read the stub file from extension resources
-			const stubUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
+			const stubUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'web', 'resources', 'automate.meta.php');
 			this.debugLog('Reading source stub file', { sourcePath: stubUri.fsPath });
 			const stubContent = await vscode.workspace.fs.readFile(stubUri);
 			this.debugLog('Source stub file read successfully', { contentSize: stubContent.length });
 			
 			// Create virtual stub file
-			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
+			realProvider.createVirtualFile('~/.stubs/automate.meta.php', stubContent);
 			this.debugLog('Virtual stub file created');
 			
 			// Get all PHP files from the file index to include in settings
@@ -64,7 +64,7 @@ export class SetupPhpStubsCommand implements Command {
 			const settingsContent = {
 				"php.stubs": [
 					"*",
-					".stubs/plugin-api.stubs.php"
+					".stubs/automate.meta.php"
 				],
 				"php.workspace.includePath": Array.from(phpDirectories).join(';'),
 				"intelephense.environment.includePaths": Array.from(phpDirectories)
@@ -115,7 +115,7 @@ export class SetupPhpStubsCommand implements Command {
 			// Update VS Code configuration programmatically
 			const phpConfig = vscode.workspace.getConfiguration('php');
 			const currentStubs = phpConfig.get('stubs', []) as string[];
-			const newStubs = [...new Set([...currentStubs, '*', '.stubs/plugin-api.stubs.php'])];
+			const newStubs = [...new Set([...currentStubs, '*', '.stubs/automate.meta.php'])];
 			
 			await phpConfig.update('stubs', newStubs, vscode.ConfigurationTarget.Workspace);
 			this.debugLog('Updated VS Code php.stubs configuration', { newStubs });
@@ -147,7 +147,7 @@ export class SetupPhpStubsCommand implements Command {
 			// Show success message
 			vscode.window.showInformationMessage('PHP stub configuration setup complete! Virtual files created in WebDAV workspace.');
 			this.debugLog('PHP stub configuration setup complete', { 
-				virtualStubPath: '~/.stubs/plugin-api.stubs.php',
+				virtualStubPath: '~/.stubs/automate.meta.php',
 				virtualSettingsPath: '/.vscode/settings.json',
 				stubSize: stubContent.length,
 				settingsSize: settingsJson.length

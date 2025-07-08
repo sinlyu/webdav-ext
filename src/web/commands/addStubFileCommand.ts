@@ -21,7 +21,7 @@ export class AddStubFileCommand implements Command {
 				return;
 			}
 			
-			const stubUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'web', 'resources', 'plugin-api.stubs.php');
+			const stubUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'web', 'resources', 'automate.meta.php');
 			
 			// Create virtual directories
 			this.debugLog('Creating virtual directories for stub file');
@@ -32,15 +32,15 @@ export class AddStubFileCommand implements Command {
 			this.debugLog('Read source stub file', { size: stubContent.length });
 			
 			// Create virtual stub file
-			realProvider.createVirtualFile('~/.stubs/plugin-api.stubs.php', stubContent);
+			realProvider.createVirtualFile('~/.stubs/automate.meta.php', stubContent);
 			
 			// Refresh the file explorer to show the new virtual files
 			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
 			this.debugLog('File explorer refreshed to show virtual files');
 			
 			// Show success message
-			vscode.window.showInformationMessage('PHP Plugin API stub file added as virtual file in WebDAV workspace for autocompletion!');
-			this.debugLog('Virtual stub file created in WebDAV filesystem', { virtualPath: '~/.stubs/plugin-api.stubs.php' });
+			vscode.window.showInformationMessage('PHP Automate meta file added as virtual file in WebDAV workspace for autocompletion!');
+			this.debugLog('Virtual stub file created in WebDAV filesystem', { virtualPath: '~/.stubs/automate.meta.php' });
 			
 		} catch (error: any) {
 			this.debugLog('Failed to add virtual stub file', { error: error.message });

@@ -14,7 +14,7 @@ export class TestGoToDefinitionCommand implements Command {
 		
 		try {
 			// Test opening the stub file directly
-			const stubUri = vscode.Uri.parse('webdav:/.stubs/plugin-api.stubs.php');
+			const stubUri = vscode.Uri.parse('webdav:/.stubs/automate.meta.php');
 			this.debugLog('Testing direct opening of stub file', { uri: stubUri.toString() });
 			
 			// Check if WebDAV provider is available
@@ -25,7 +25,7 @@ export class TestGoToDefinitionCommand implements Command {
 			}
 			
 			// Check if stub file exists
-			if (!realProvider.hasVirtualFile('~/.stubs/plugin-api.stubs.php')) {
+			if (!realProvider.hasVirtualFile('~/.stubs/automate.meta.php')) {
 				vscode.window.showWarningMessage('Stub file not found. Creating it now...');
 				if (this.stubFileCreator) {
 					await this.stubFileCreator();
