@@ -2,7 +2,7 @@
   "name": "automate-webdav",
   "displayName": "edoc Automate WebDAV",
   "description": "Professional WebDAV integration for edoc Automate development with intelligent search, file indexing, and PHP IntelliSense",
-  "version": "0.4.0",
+  "version": "0.5.2",
   "publisher": "Sinlyu",
   "icon": "resources/webdav_logo.png",
   "engines": {
@@ -37,6 +37,7 @@
     "url": "https://github.com/Sinlyu/automate-webdav/issues"
   },
   "activationEvents": [],
+  "main": "./dist/web/extension.js",
   "browser": "./dist/web/extension.js",
   "contributes": {
     "languages": [
@@ -141,18 +142,21 @@
   },
   "scripts": {
     "test": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=. --extensionTestsPath=dist/web/test/suite/index.js",
-    "pretest": "npm run compile-web",
-    "vscode:prepublish": "npm run package-web",
-    "compile-web": "webpack",
-    "watch-web": "webpack --watch",
-    "package-web": "webpack --mode production --devtool hidden-source-map",
-    "package-vscode-dev": "npm run package-web && vsce package --target web",
-    "test-vsix": "./scripts/test-vsix.sh",
-    "test-vsix-web": "./scripts/test-vsix-web.sh",
-    "test-vsix-simple": "npm run package-vscode-dev && code --install-extension $(ls automate-webdav-web-*.vsix | head -1) --force",
+    "pretest": "npm run compile",
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "package-web": "npm run package && vsce package --target web",
+    "package-win32-x64": "npm run package && vsce package --target win32-x64",
+    "package-linux-x64": "npm run package && vsce package --target linux-x64",
+    "package-darwin-x64": "npm run package && vsce package --target darwin-x64",
+    "package-darwin-arm64": "npm run package && vsce package --target darwin-arm64",
+    "package-universal": "npm run package && vsce package",
+    "test-vsix-simple": "npm run package-web && code --install-extension $(ls automate-webdav-web-*.vsix | head -1) --force",
     "uninstall-vsix": "code --uninstall-extension Sinlyu.automate-webdav",
     "lint": "eslint src",
-    "run-in-browser": "vscode-test-web --browserType=chromium --browserOption=--disable-web-security --browserOption=--disable-features=VizDisplayCompositor --extensionDevelopmentPath=. ."
+    "run-in-browser": "vscode-test-web --browserType=chromium --browserOption=--disable-web-security --browserOption=--disable-features=VizDisplayCompositor --browserOption=--disable-gpu --browserOption=--disable-dev-shm-usage --extensionDevelopmentPath=. ."
   },
   "devDependencies": {
     "@types/assert": "^1.5.11",

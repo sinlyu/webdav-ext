@@ -2,6 +2,11 @@
 	'use strict';
 	
 	const vscode = acquireVsCodeApi();
+	let workspaces = [];
+	let availableProjects = [];
+	
+	// Get previous state
+	const previousState = vscode.getState() || {};
 	
 	function setupEventHandlers() {
 		const webdavForm = document.getElementById('webdavForm');
@@ -17,6 +22,11 @@
 		const addWorkspaceBtn = document.getElementById('addWorkspaceBtn');
 		if (addWorkspaceBtn) {
 			addWorkspaceBtn.addEventListener('click', handleAddWorkspace);
+		}
+		
+		const availableProjectsSelect = document.getElementById('availableProjects');
+		if (availableProjectsSelect) {
+			availableProjectsSelect.addEventListener('change', handleProjectSelection);
 		}
 		
 		const urlInput = document.getElementById('url');
@@ -42,9 +52,8 @@
 		const urlInput = document.getElementById('url');
 		const usernameInput = document.getElementById('username');
 		const passwordInput = document.getElementById('password');
-		const projectSelect = document.getElementById('project');
 		
-		if (!urlInput || !usernameInput || !passwordInput || !projectSelect) {
+		if (!urlInput || !usernameInput || !passwordInput) {
 			console.error('Form elements not found');
 			return;
 		}
@@ -52,10 +61,9 @@
 		const url = urlInput.value;
 		const username = usernameInput.value;
 		const password = passwordInput.value;
-		const project = projectSelect.value;
 		
-		if (!project) {
-			showError('Please select a project from the dropdown.');
+		if (!url || !username || !password) {
+			showError('Please fill in all fields.');
 			return;
 		}
 		
@@ -66,8 +74,7 @@
 			type: 'connect',
 			url: url,
 			username: username,
-			password: password,
-			project: project
+			password: password
 		});
 	}
 	
@@ -76,18 +83,74 @@
 	}
 	
 	function handleAddWorkspace() {
-		vscode.postMessage({ type: 'addToWorkspace' });
+		const availableProjectsSelect = document.getElementById('availableProjects');
+		const workspaceNameInput = document.getElementById('workspaceName');
+		
+		const selectedProject = availableProjectsSelect ? availableProjectsSelect.value : '';
+		const customName = workspaceNameInput ? workspaceNameInput.value.trim() : '';
+		
+		if (!selectedProject) {
+			alert('Please select a project to add to workspace');
+			return;
+		}
+		
+		vscode.postMessage({ 
+			type: 'addProjectToWorkspace',
+			project: selectedProject,
+			customName: customName || undefined
+		});
+	}
+	
+	function handleProjectSelection() {
+		const availableProjectsSelect = document.getElementById('availableProjects');
+		const addWorkspaceBtn = document.getElementById('addWorkspaceBtn');
+		const workspaceNameInput = document.getElementById('workspaceName');
+		
+		if (availableProjectsSelect && addWorkspaceBtn) {
+			const selectedProject = availableProjectsSelect.value;
+			addWorkspaceBtn.disabled = !selectedProject;
+			
+			// Auto-generate workspace name if none provided
+			if (selectedProject && workspaceNameInput && !workspaceNameInput.value.trim()) {
+				const connectedUrl = document.getElementById('connectedUrl');
+				if (connectedUrl) {
+					try {
+						const hostname = new URL(connectedUrl.textContent || '').hostname;
+						workspaceNameInput.value = `${selectedProject} (${hostname})`;
+					} catch {
+						workspaceNameInput.value = selectedProject;
+					}
+				}
+			}
+		}
+	}
+	
+	function handleWorkspaceAction(action, workspaceId, data = {}) {
+		vscode.postMessage({
+			type: 'workspaceAction',
+			action: action,
+			workspaceId: workspaceId,
+			...data
+		});
+	}
+	
+	function renameWorkspace(workspaceId) {
+		const workspace = workspaces.find(w => w.id === workspaceId);
+		if (!workspace) return;
+
+		const newName = prompt('Enter new workspace name:', workspace.name);
+		if (newName && newName.trim() && newName.trim() !== workspace.name) {
+			handleWorkspaceAction('rename', workspaceId, { newName: newName.trim() });
+		}
 	}
 	
 	function handleCredentialsChange() {
 		const urlInput = document.getElementById('url');
 		const usernameInput = document.getElementById('username');
 		const passwordInput = document.getElementById('password');
-		const projectGroup = document.getElementById('projectGroup');
-		const projectSelect = document.getElementById('project');
 		const connectBtn = document.getElementById('connectBtn');
 		
-		if (!urlInput || !usernameInput || !passwordInput || !projectGroup || !projectSelect || !connectBtn) {
+		if (!urlInput || !usernameInput || !passwordInput || !connectBtn) {
 			return;
 		}
 		
@@ -95,28 +158,8 @@
 		const username = usernameInput.value.trim();
 		const password = passwordInput.value.trim();
 		
-		// Check if all credentials are provided
-		if (url && username && password) {
-			// Enable project fetching
-			projectGroup.style.display = 'block';
-			projectSelect.disabled = true;
-			connectBtn.disabled = true;
-			
-			// Clear previous projects
-			projectSelect.innerHTML = '<option value="">Loading projects...</option>';
-			
-			// Fetch projects from server
-			vscode.postMessage({
-				type: 'fetchProjects',
-				url: url,
-				username: username,
-				password: password
-			});
-		} else {
-			// Hide project selection and disable connect button
-			projectGroup.style.display = 'none';
-			connectBtn.disabled = true;
-		}
+		// Enable connect button when all credentials are provided
+		connectBtn.disabled = !(url && username && password);
 	}
 	
 	function handleMessage(event) {
@@ -136,8 +179,28 @@
 				setLoadingState(false);
 				showError(message.error || 'Connection failed');
 				break;
-			case 'projectList':
-				handleProjectList(message.projects, message.error);
+			case 'workspaceList':
+				updateWorkspaceList(message.workspaces);
+				break;
+			case 'clearWorkspaceName':
+				const workspaceNameInput = document.getElementById('workspaceName');
+				if (workspaceNameInput) {
+					workspaceNameInput.value = '';
+				}
+				break;
+			case 'clearWorkspaceForm':
+				const workspaceNameInput2 = document.getElementById('workspaceName');
+				const availableProjectsSelect = document.getElementById('availableProjects');
+				const addWorkspaceBtn = document.getElementById('addWorkspaceBtn');
+				if (workspaceNameInput2) {
+					workspaceNameInput2.value = '';
+				}
+				if (availableProjectsSelect) {
+					availableProjectsSelect.selectedIndex = 0;
+				}
+				if (addWorkspaceBtn) {
+					addWorkspaceBtn.disabled = true;
+				}
 				break;
 		}
 	}
@@ -154,15 +217,33 @@
 		
 		const connectedUrl = document.getElementById('connectedUrl');
 		const connectedUser = document.getElementById('connectedUser');
-		const connectedProject = document.getElementById('connectedProject');
 		if (connectedUrl) {
 			connectedUrl.textContent = message.url || '';
 		}
 		if (connectedUser) {
 			connectedUser.textContent = message.username || '';
 		}
-		if (connectedProject) {
-			connectedProject.textContent = message.project || '';
+		
+		console.log('Connection status message received', {
+			availableProjects: message.availableProjects,
+			projectListError: message.projectListError,
+			projectCount: message.availableProjects?.length || 0
+		});
+		
+		// Handle project list errors
+		if (message.projectListError) {
+			console.error('Project list error:', message.projectListError);
+			showProjectError(message.projectListError);
+			return;
+		}
+		
+		// Populate available projects if provided
+		if (message.availableProjects) {
+			updateAvailableProjects(message.availableProjects);
+			hideProjectError();
+		} else {
+			console.warn('No availableProjects in connection status message');
+			updateAvailableProjects([]);
 		}
 	}
 	
@@ -181,7 +262,7 @@
 	function setLoadingState(loading) {
 		const connectBtn = document.getElementById('connectBtn');
 		if (connectBtn) {
-			connectBtn.textContent = loading ? 'Connecting...' : 'Connect to WebDAV';
+			connectBtn.textContent = loading ? 'Connecting...' : 'Connect to edoc Automate';
 			connectBtn.disabled = loading;
 		}
 		const connectionForm = document.querySelector('.connection-form');
@@ -209,53 +290,166 @@
 		}
 	}
 	
-	function handleProjectList(projects, error) {
-		const projectSelect = document.getElementById('project');
-		const connectBtn = document.getElementById('connectBtn');
-		
-		if (!projectSelect || !connectBtn) {
+	function showProjectError(message) {
+		const projectError = document.getElementById('projectError') || createProjectErrorElement();
+		if (projectError) {
+			projectError.textContent = `Project Error: ${message}`;
+			projectError.className = 'project-message project-error';
+			projectError.classList.remove('hidden');
+		}
+	}
+	
+	function showProjectWarning(message) {
+		const projectError = document.getElementById('projectError') || createProjectErrorElement();
+		if (projectError) {
+			projectError.textContent = message;
+			projectError.className = 'project-message project-warning';
+			projectError.classList.remove('hidden');
+		}
+	}
+	
+	function showProjectSuccess(message) {
+		const projectError = document.getElementById('projectError') || createProjectErrorElement();
+		if (projectError) {
+			projectError.textContent = message;
+			projectError.className = 'project-message project-success';
+			projectError.classList.remove('hidden');
+			// Auto-hide success message after 3 seconds
+			setTimeout(() => hideProjectError(), 3000);
+		}
+	}
+	
+	function hideProjectError() {
+		const projectError = document.getElementById('projectError');
+		if (projectError) {
+			projectError.classList.add('hidden');
+		}
+	}
+	
+	function createProjectErrorElement() {
+		let projectError = document.getElementById('projectError');
+		if (!projectError) {
+			projectError = document.createElement('div');
+			projectError.id = 'projectError';
+			projectError.className = 'project-message hidden';
+			
+			// Insert after the availableProjects select
+			const availableProjectsSelect = document.getElementById('availableProjects');
+			if (availableProjectsSelect && availableProjectsSelect.parentNode) {
+				availableProjectsSelect.parentNode.insertBefore(projectError, availableProjectsSelect.nextSibling);
+			}
+		}
+		return projectError;
+	}
+	
+	
+	function updateAvailableProjects(projects) {
+		const availableProjectsSelect = document.getElementById('availableProjects');
+		if (!availableProjectsSelect) {
+			console.error('availableProjects select element not found');
 			return;
 		}
 		
-		if (error) {
-			projectSelect.innerHTML = '<option value="">Failed to load projects</option>';
-			projectSelect.disabled = true;
-			connectBtn.disabled = true;
-			showError(error);
+		console.log('Updating available projects', { projects, count: projects?.length || 0, type: typeof projects });
+		
+		// Store projects in global variable and webview state
+		availableProjects = projects || [];
+		vscode.setState({ ...vscode.getState(), availableProjects: availableProjects });
+		
+		availableProjectsSelect.innerHTML = '<option value="">Select a project to add...</option>';
+		
+		if (projects && projects.length > 0) {
+			projects.forEach(project => {
+				const option = document.createElement('option');
+				// Handle both string arrays and object arrays
+				const projectName = typeof project === 'string' ? project : (project.name || project);
+				option.value = projectName;
+				option.textContent = projectName;
+				availableProjectsSelect.appendChild(option);
+				console.log('Added project option', projectName);
+			});
+			showProjectSuccess(`Found ${projects.length} project(s)`);
+		} else {
+			console.warn('No projects provided or empty array');
+			showProjectWarning('No projects found on the server');
+		}
+	}
+	
+	function updateWorkspaceList(workspaceData) {
+		workspaces = workspaceData || [];
+		const workspaceList = document.getElementById('workspaceList');
+		
+		if (!workspaceList) {
 			return;
 		}
 		
-		if (!projects || projects.length === 0) {
-			projectSelect.innerHTML = '<option value="">No projects found</option>';
-			projectSelect.disabled = true;
-			connectBtn.disabled = true;
-			showError('No projects found on the server');
+		if (workspaces.length === 0) {
+			workspaceList.innerHTML = `
+				<div class="workspace-empty">
+					No workspaces added yet. Connect to a project and add it to your workspace.
+				</div>
+			`;
 			return;
 		}
+
+		workspaceList.innerHTML = workspaces.map(workspace => `
+			<div class="workspace-item ${workspace.isActive ? 'active' : ''}">
+				<div class="workspace-header">
+					<div class="workspace-info">
+						<div class="workspace-name">${workspace.name}</div>
+						<div class="workspace-details">
+							<div>Project: ${workspace.credentials.project}</div>
+							<div>Server: ${new URL(workspace.credentials.url).hostname}</div>
+							<div>Added: ${new Date(workspace.dateAdded).toLocaleDateString()}</div>
+						</div>
+					</div>
+					${workspace.isActive ? '<div class="workspace-status">Active</div>' : ''}
+				</div>
+				<div class="workspace-actions">
+					<button class="workspace-btn workspace-btn-secondary" onclick="renameWorkspace('${workspace.id}')">
+						Rename
+					</button>
+					${workspace.isActive 
+						? `<button class="workspace-btn workspace-btn-secondary" onclick="handleWorkspaceAction('deactivate', '${workspace.id}')">Remove</button>`
+						: `<button class="workspace-btn workspace-btn-primary" onclick="handleWorkspaceAction('activate', '${workspace.id}')">Add</button>`
+					}
+					<button class="workspace-btn workspace-btn-danger" onclick="handleWorkspaceAction('delete', '${workspace.id}')">
+						Delete
+					</button>
+				</div>
+			</div>
+		`).join('');
+	}
+	
+	// Make functions available globally for onclick handlers
+	window.handleWorkspaceAction = handleWorkspaceAction;
+	window.renameWorkspace = renameWorkspace;
+	
+	// Request workspace list on load
+	function requestWorkspaceList() {
+		vscode.postMessage({ type: 'getWorkspaces' });
+	}
+	
+	// Restore state from previous session
+	function restoreState() {
+		console.log('Restoring webview state', previousState);
 		
-		// Populate project dropdown
-		projectSelect.innerHTML = '<option value="">Select a project...</option>';
-		projects.forEach(project => {
-			const option = document.createElement('option');
-			option.value = project.name;
-			option.textContent = project.name;
-			projectSelect.appendChild(option);
-		});
-		
-		projectSelect.disabled = false;
-		
-		// Enable connect button when a project is selected
-		projectSelect.addEventListener('change', function() {
-			connectBtn.disabled = !this.value;
-		});
-		
-		hideError();
+		if (previousState.availableProjects && previousState.availableProjects.length > 0) {
+			console.log('Restoring cached projects', previousState.availableProjects);
+			updateAvailableProjects(previousState.availableProjects);
+		}
 	}
 	
 	// Initialize when DOM is ready
 	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', setupEventHandlers);
+		document.addEventListener('DOMContentLoaded', function() {
+			setupEventHandlers();
+			requestWorkspaceList();
+			restoreState();
+		});
 	} else {
 		setupEventHandlers();
+		requestWorkspaceList();
+		restoreState();
 	}
 })();

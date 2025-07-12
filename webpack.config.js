@@ -14,7 +14,7 @@ const webpack = require('webpack');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 /** @type WebpackConfig */
-const webExtensionConfig = {
+const extensionConfig = {
 	mode: 'none', // this leaves the source code as close as possible to the original (when packaging we set this to 'production')
 	target: 'webworker', // extensions run in a webworker context
 	entry: {
@@ -25,7 +25,8 @@ const webExtensionConfig = {
 		filename: '[name].js',
 		path: path.join(__dirname, './dist/web'),
 		libraryTarget: 'commonjs',
-		devtoolModuleFilenameTemplate: '../../[resource-path]'
+		devtoolModuleFilenameTemplate: '../../[resource-path]',
+		globalObject: '(typeof self !== "undefined" ? self : this)'
 	},
 	resolve: {
 		mainFields: ['browser', 'module', 'main'], // look for `browser` entry point in imported node modules
@@ -56,6 +57,10 @@ const webExtensionConfig = {
 		new webpack.ProvidePlugin({
 			process: 'process/browser', // provide a shim for the global `process` variable
 		}),
+		new webpack.BannerPlugin({
+			banner: 'if (typeof self === "undefined") { var self = (typeof global !== "undefined" ? global : this); }',
+			raw: true
+		}),
 		new CopyWebpackPlugin({
 			patterns: [
 				{
@@ -81,4 +86,4 @@ const webExtensionConfig = {
 	},
 };
 
-module.exports = [ webExtensionConfig ];
+module.exports = extensionConfig;

@@ -46,15 +46,22 @@ export class WebDAVApi {
 	/**
 	 * Builds the complete URL for a given path
 	 */
-	private buildUrl(path: string): string {
+	private buildUrl(path: string, addCacheBuster: boolean = false): string {
 		// Normalize the path - remove leading slash and clean up multiple slashes
 		let cleanPath = path.replace(/^\/+/, '').replace(/\/+/g, '/');
 		// Remove trailing slash except for empty path
 		if (cleanPath.endsWith('/') && cleanPath.length > 1) {
 			cleanPath = cleanPath.slice(0, -1);
 		}
-		const url = cleanPath ? `${this.baseUrl}/${cleanPath}` : `${this.baseUrl}/`;
-		this.debugLog('Built URL', { originalPath: path, cleanPath, url });
+		let url = cleanPath ? `${this.baseUrl}/${cleanPath}` : `${this.baseUrl}/`;
+		
+		// Add cache buster timestamp for file reads to prevent browser caching
+		if (addCacheBuster) {
+			const separator = url.includes('?') ? '&' : '?';
+			url += `${separator}_cb=${Date.now()}`;
+		}
+		
+		this.debugLog('Built URL', { originalPath: path, cleanPath, url, cacheBuster: addCacheBuster });
 		return url;
 	}
 
@@ -131,10 +138,13 @@ export class WebDAVApi {
 	 */
 	async getDirectoryListing(path: string): Promise<WebDAVDirectoryResponse> {
 		try {
-			const url = this.buildUrl(path);
+			const url = this.buildUrl(path, true); // Add cache buster for directory listings
 			const response = await this.makeRequest(url, {
 				headers: {
-					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+					'Cache-Control': 'no-cache, no-store, must-revalidate',
+					'Pragma': 'no-cache',
+					'Expires': '0'
 				}
 			});
 
@@ -174,10 +184,13 @@ export class WebDAVApi {
 	 */
 	async readFile(path: string): Promise<WebDAVFileResponse> {
 		try {
-			const url = this.buildUrl(path);
+			const url = this.buildUrl(path, true); // Add cache buster for file reads
 			const response = await this.makeRequest(url, {
 				headers: {
-					'Accept': '*/*'
+					'Accept': '*/*',
+					'Cache-Control': 'no-cache, no-store, must-revalidate',
+					'Pragma': 'no-cache',
+					'Expires': '0'
 				}
 			});
 
@@ -414,7 +427,7 @@ export class WebDAVApi {
 	 */
 	static async getProjectList(baseUrl: string, username: string, password: string): Promise<WebDAVDirectoryResponse> {
 		const debugLog = (message: string, data?: any) => {
-			console.log(`[WebDAVApi] ${message}`, data);
+			console.log(`[WebDAVApi.getProjectList] ${message}`, data);
 		};
 
 		try {
@@ -422,38 +435,88 @@ export class WebDAVApi {
 			const headers = {
 				'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
 				'User-Agent': 'VSCode-WebDAV-Extension',
-				'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+				'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+				'Cache-Control': 'no-cache, no-store, must-revalidate',
+				'Pragma': 'no-cache',
+				'Expires': '0'
 			};
 
-			debugLog('Fetching project list', { url: appsRemoteUrl });
+			debugLog('Fetching project list', { 
+				url: appsRemoteUrl, 
+				username,
+				headers: Object.keys(headers)
+			});
+
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => {
+				controller.abort();
+				debugLog('Request timed out');
+			}, 15000);
 
 			const response = await fetch(appsRemoteUrl, {
 				method: 'GET',
 				headers,
 				mode: 'cors',
-				credentials: 'include'
+				credentials: 'include',
+				signal: controller.signal
+			});
+
+			clearTimeout(timeoutId);
+
+			debugLog('Response received', { 
+				status: response.status, 
+				statusText: response.statusText,
+				contentType: response.headers.get('content-type'),
+				contentLength: response.headers.get('content-length')
 			});
 
 			if (!response.ok) {
-				debugLog('Failed to fetch project list', { status: response.status, statusText: response.statusText });
+				const errorText = await response.text().catch(() => 'Unable to read error response');
+				debugLog('Failed to fetch project list', { 
+					status: response.status, 
+					statusText: response.statusText,
+					errorText: errorText.substring(0, 500)
+				});
 				return {
 					items: [],
 					success: false,
-					error: `HTTP ${response.status}: ${response.statusText}`
+					error: `HTTP ${response.status}: ${response.statusText}. ${errorText.substring(0, 200)}`
 				};
 			}
 
 			const html = await response.text();
+			debugLog('HTML response received', { 
+				length: html.length,
+				preview: html.substring(0, 200)
+			});
+			
 			const items = parseDirectoryHTML(html);
+			debugLog('Parsed HTML items', { 
+				totalParsed: items.length,
+				allItems: items.map(item => ({ 
+					name: item.name, 
+					isDirectory: item.isDirectory,
+					size: item.size 
+				}))
+			});
 			
 			// Filter out non-directory items and system folders
-			const projects = items.filter(item => 
-				item.isDirectory && 
-				!item.name.startsWith('.') && 
-				item.name !== 'index.html' &&
-				item.name !== 'parent' &&
-				item.name !== '..'
-			);
+			const projects = items.filter(item => {
+				const isValidProject = item.isDirectory && 
+					!item.name.startsWith('.') && 
+					item.name !== 'index.html' &&
+					item.name !== 'parent' &&
+					item.name !== '..' &&
+					item.name.trim() !== '';
+				
+				debugLog('Filtering item', {
+					name: item.name,
+					isDirectory: item.isDirectory,
+					isValidProject
+				});
+				
+				return isValidProject;
+			});
 
 			debugLog('Project list retrieved', { 
 				totalItems: items.length,
@@ -466,11 +529,24 @@ export class WebDAVApi {
 				success: true
 			};
 		} catch (error: any) {
-			debugLog('Error getting project list', { error: error.message });
+			debugLog('Error getting project list', { 
+				error: error.message, 
+				name: error.name,
+				stack: error.stack?.substring(0, 500)
+			});
+			
+			// Provide more specific error messages
+			let errorMessage = error.message;
+			if (error.name === 'AbortError') {
+				errorMessage = 'Request timed out after 15 seconds';
+			} else if (error.message === 'Failed to fetch') {
+				errorMessage = 'Network error - check CORS settings or server availability';
+			}
+			
 			return {
 				items: [],
 				success: false,
-				error: error.message
+				error: errorMessage
 			};
 		}
 	}

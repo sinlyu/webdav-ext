@@ -226,17 +226,10 @@ export class SimpleCache<T> {
  * Specialized cache for WebDAV operations
  */
 export class WebDAVCache {
-	private fileCache: SimpleCache<Uint8Array>;
 	private directoryCache: SimpleCache<any[]>;
 	private metadataCache: SimpleCache<any>;
 
 	constructor() {
-		this.fileCache = new SimpleCache<Uint8Array>({
-			defaultTTL: 5 * 60 * 1000, // 5 minutes
-			maxSize: 40 * 1024 * 1024, // 40MB for files
-			maxEntries: 500
-		});
-
 		this.directoryCache = new SimpleCache<any[]>({
 			defaultTTL: 2 * 60 * 1000, // 2 minutes
 			maxSize: 5 * 1024 * 1024, // 5MB for directories
@@ -250,18 +243,6 @@ export class WebDAVCache {
 		});
 	}
 
-	// File operations
-	getFile(path: string): Uint8Array | undefined {
-		return this.fileCache.get(path);
-	}
-
-	setFile(path: string, content: Uint8Array): void {
-		this.fileCache.set(path, content);
-	}
-
-	deleteFile(path: string): void {
-		this.fileCache.delete(path);
-	}
 
 	// Directory operations
 	getDirectory(path: string): any[] | undefined {
@@ -292,7 +273,7 @@ export class WebDAVCache {
 	// Bulk operations
 	deleteRecursive(basePath: string): void {
 		// Delete all cached items that start with the base path
-		const caches = [this.fileCache, this.directoryCache, this.metadataCache];
+		const caches = [this.directoryCache, this.metadataCache];
 		
 		for (const cache of caches) {
 			const keysToDelete: string[] = [];
@@ -312,7 +293,6 @@ export class WebDAVCache {
 
 	// Clear all caches
 	clear(): void {
-		this.fileCache.clear();
 		this.directoryCache.clear();
 		this.metadataCache.clear();
 	}
@@ -320,7 +300,6 @@ export class WebDAVCache {
 	// Get combined statistics
 	getStats(): any {
 		return {
-			files: this.fileCache.getStats(),
 			directories: this.directoryCache.getStats(),
 			metadata: this.metadataCache.getStats()
 		};
@@ -328,7 +307,6 @@ export class WebDAVCache {
 
 	// Dispose of all resources
 	dispose(): void {
-		this.fileCache.dispose();
 		this.directoryCache.dispose();
 		this.metadataCache.dispose();
 	}

@@ -204,6 +204,133 @@
 			0% { transform: translate(-50%, -50%) rotate(0deg); }
 			100% { transform: translate(-50%, -50%) rotate(360deg); }
 		}
+		.workspace-manager {
+			margin-top: 20px;
+			border-top: 1px solid var(--vscode-widget-border);
+			padding-top: 20px;
+		}
+		.workspace-list {
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+		}
+		.workspace-item {
+			background-color: var(--vscode-editorWidget-background);
+			border: 1px solid var(--vscode-editorWidget-border);
+			border-radius: 8px;
+			padding: 16px;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			position: relative;
+		}
+		.workspace-item.active {
+			border-color: var(--vscode-button-background);
+			background-color: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+		}
+		.workspace-item.active .workspace-status {
+			color: var(--vscode-button-foreground);
+		}
+		.workspace-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: flex-start;
+			gap: 12px;
+		}
+		.workspace-info {
+			flex: 1;
+			min-width: 0;
+		}
+		.workspace-name {
+			font-weight: 600;
+			font-size: 14px;
+			margin-bottom: 4px;
+			word-wrap: break-word;
+		}
+		.workspace-details {
+			font-size: 12px;
+			color: var(--vscode-descriptionForeground);
+			display: flex;
+			flex-direction: column;
+			gap: 2px;
+		}
+		.workspace-item.active .workspace-details {
+			color: rgba(255, 255, 255, 0.8);
+		}
+		.workspace-actions {
+			display: flex;
+			gap: 8px;
+			flex-shrink: 0;
+		}
+		.workspace-btn {
+			padding: 6px 12px;
+			font-size: 11px;
+			border-radius: 4px;
+			border: none;
+			cursor: pointer;
+			font-weight: 500;
+			transition: all 0.2s ease;
+		}
+		.workspace-btn-primary {
+			background-color: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+		}
+		.workspace-btn-primary:hover {
+			background-color: var(--vscode-button-hoverBackground);
+		}
+		.workspace-btn-secondary {
+			background-color: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			border: 1px solid var(--vscode-button-border, transparent);
+		}
+		.workspace-btn-secondary:hover {
+			background-color: var(--vscode-button-secondaryHoverBackground);
+		}
+		.workspace-btn-danger {
+			background-color: var(--vscode-errorForeground);
+			color: white;
+		}
+		.workspace-btn-danger:hover {
+			background-color: var(--vscode-testing-iconFailed);
+		}
+		.workspace-status {
+			font-size: 11px;
+			padding: 4px 8px;
+			border-radius: 12px;
+			background-color: var(--vscode-testing-iconPassed);
+			color: white;
+			font-weight: 500;
+			align-self: flex-start;
+		}
+		.workspace-empty {
+			text-align: center;
+			padding: 40px 20px;
+			color: var(--vscode-descriptionForeground);
+			font-size: 13px;
+		}
+		.project-message {
+			font-size: 12px;
+			margin-top: 6px;
+			padding: 8px 12px;
+			border-radius: 4px;
+			border-left: 3px solid;
+		}
+		.project-error {
+			color: var(--vscode-errorForeground);
+			background-color: var(--vscode-inputValidation-errorBackground);
+			border-left-color: var(--vscode-errorForeground);
+		}
+		.project-warning {
+			color: var(--vscode-editorWarning-foreground);
+			background-color: var(--vscode-inputValidation-warningBackground);
+			border-left-color: var(--vscode-editorWarning-foreground);
+		}
+		.project-success {
+			color: var(--vscode-testing-iconPassed);
+			background-color: var(--vscode-inputValidation-infoBackground);
+			border-left-color: var(--vscode-testing-iconPassed);
+		}
 	</style>
 </head>
 <body>
@@ -213,7 +340,7 @@
 			<form id="webdavForm">
 				<div class="form-group">
 					<label for="url">edoc Automate Server URL</label>
-					<input type="url" id="url" placeholder="https://edocadpsolutionsqa.westeurope.cloudapp.azure.com" required>
+					<input type="url" id="url" placeholder="Enter the app server" required>
 					<div id="urlError" class="error hidden"></div>
 				</div>
 				<div class="form-group">
@@ -223,18 +350,6 @@
 				<div class="form-group">
 					<label for="password">Password</label>
 					<input type="password" id="password" placeholder="Enter password" required>
-				</div>
-				<div class="form-group" id="projectGroup" style="display: none;">
-					<label for="project">Select Project</label>
-					<select id="project" disabled>
-						<option value="">Select a project...</option>
-					</select>
-					<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 6px; padding: 6px 8px; background-color: var(--vscode-editorHoverWidget-background); border-radius: 4px; border-left: 3px solid var(--vscode-textLink-foreground);">
-						<span style="display: inline-block; width: 12px; height: 12px; background-color: var(--vscode-textLink-foreground); border-radius: 50%; margin-right: 6px; position: relative;">
-							<span style="position: absolute; top: 51%; left: 50%; transform: translate(-50%, -50%); color: var(--vscode-editor-background); font-size: 8px; font-weight: bold;">i</span>
-						</span>
-						Projects are fetched from the server after entering valid credentials
-					</div>
 				</div>
 				<button type="submit" class="btn" id="connectBtn">Connect to edoc Automate</button>
 			</form>
@@ -252,13 +367,29 @@
 					<span class="status-label">User:</span>
 					<span class="status-value" id="connectedUser"></span>
 				</div>
-				<div class="status-item">
-					<span class="status-label">Project:</span>
-					<span class="status-value" id="connectedProject"></span>
-				</div>
 			</div>
-			<button class="btn" id="addWorkspaceBtn">Add to Workspace</button>
+			
+			<div class="form-group">
+				<label for="availableProjects">Add Project to Workspace</label>
+				<select id="availableProjects">
+					<option value="">Select a project to add...</option>
+				</select>
+			</div>
+			
+			<div class="form-group">
+				<label for="workspaceName">Workspace Name (Optional)</label>
+				<input type="text" id="workspaceName" placeholder="Custom workspace name">
+			</div>
+			
+			<button class="btn" id="addWorkspaceBtn" disabled>Add Selected Project to Workspace</button>
 			<button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
+		</div>
+
+		<div id="workspaceManager" class="workspace-manager">
+			<h3><span class="brand-icon"></span>Workspace Manager</h3>
+			<div id="workspaceList" class="workspace-list">
+				<!-- Workspaces will be populated here -->
+			</div>
 		</div>
 	</div>
 </body>

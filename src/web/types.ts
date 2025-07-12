@@ -5,6 +5,19 @@ export interface WebDAVCredentials {
 	project?: string;
 }
 
+export interface WebDAVWorkspace {
+	id: string;
+	name: string; // Custom workspace name
+	credentials: WebDAVCredentials;
+	isActive: boolean;
+	dateAdded: number;
+}
+
+export interface MultiWorkspaceState {
+	workspaces: WebDAVWorkspace[];
+	activeWorkspaceId?: string;
+}
+
 export interface WebDAVFileItem {
 	name: string;
 	type: string;

@@ -7,6 +7,7 @@ import { IPHPDefinitionProvider } from '../providers/phpDefinitionProviderInterf
 import { WebDAVFileIndex } from '../core/fileIndex';
 import { TemplateLoader } from './templates/templateLoader';
 import { WebDAVApi } from '../core/webdavApi';
+import { WorkspaceManager } from '../services/workspaceManager';
 
 export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'webdavConnection';
@@ -14,6 +15,9 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	private credentials: WebDAVCredentials | null = null;
 	private connected = false;
 	private fsProvider: WebDAVFileSystemProvider | null = null;
+	private workspaceManager: WorkspaceManager;
+	private cachedProjects: any[] = [];
+	private webviewState: any = {};
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -26,7 +30,9 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		private readonly globalContext: vscode.ExtensionContext,
 		private readonly globalStubFileCreator: (() => Promise<void>) | null,
 		private readonly debugOutput: vscode.OutputChannel
-	) {}
+	) {
+		this.workspaceManager = new WorkspaceManager(this.globalContext, this.debugLog);
+	}
 
 	public async resolveWebviewView(
 		webviewView: vscode.WebviewView,
@@ -39,14 +45,22 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			enableScripts: true,
 			localResourceRoots: [this._extensionUri]
 		};
+		
+		// Enable retaining context when hidden (VS Code API property)
+		if ('retainContextWhenHidden' in webviewView) {
+			(webviewView as any).retainContextWhenHidden = true;
+		}
 
 		webviewView.webview.html = await this._getHtmlForWebview(webviewView.webview);
 
 		// Add visibility change handler to maintain connection state
 		webviewView.onDidChangeVisibility(() => {
 			if (webviewView.visible) {
-				this.debugLog('Webview became visible, attempting auto-reconnect');
-				this.autoReconnect();
+				this.debugLog('Webview became visible, restoring state');
+				this.autoReconnect().then(() => {
+					// Restore webview state after reconnection
+					this.restoreWebviewState();
+				});
 			}
 		});
 
@@ -64,21 +78,29 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 						this.debugLog('Test message received from webview');
 						vscode.window.showInformationMessage('Webview test successful!');
 						break;
-					case 'fetchProjects':
-						this.debugLog('Processing fetchProjects message', { url: data.url, username: data.username });
-						await this.fetchProjects(data.url, data.username, data.password);
-						break;
 					case 'connect':
-						this.debugLog('Processing connect message', { url: data.url, username: data.username, project: data.project });
-						await this.connect(data.url, data.username, data.password, data.project);
+						this.debugLog('Processing connect message', { url: data.url, username: data.username });
+						await this.connect(data.url, data.username, data.password);
 						break;
 					case 'disconnect':
 						this.debugLog('Processing disconnect message');
 						this.disconnect();
 						break;
 					case 'addToWorkspace':
-						this.debugLog('Processing addToWorkspace message');
-						this.openFiles();
+						this.debugLog('Processing addToWorkspace message', { customName: data.customName });
+						await this.addToWorkspace(data.customName);
+						break;
+					case 'addProjectToWorkspace':
+						this.debugLog('Processing addProjectToWorkspace message', { project: data.project, customName: data.customName });
+						await this.addProjectToWorkspace(data.project, data.customName);
+						break;
+					case 'getWorkspaces':
+						this.debugLog('Processing getWorkspaces message');
+						this.sendWorkspaceList();
+						break;
+					case 'workspaceAction':
+						this.debugLog('Processing workspaceAction message', { action: data.action, workspaceId: data.workspaceId });
+						await this.handleWorkspaceAction(data.action, data.workspaceId, data);
 						break;
 					default:
 						this.debugLog('Unknown message type', { type: data.type });
@@ -117,6 +139,54 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
+	private async updateWebviewWithProjects() {
+		if (this._view && this.credentials) {
+			try {
+				const baseUrl = this.getBaseUrl(this.credentials.url);
+				this.debugLog('Fetching projects for webview', { baseUrl, username: this.credentials.username });
+				
+				const response = await WebDAVApi.getProjectList(baseUrl, this.credentials.username, this.credentials.password);
+				
+				this.debugLog('Project list response', { 
+					success: response.success, 
+					itemCount: response.items?.length || 0,
+					error: response.error,
+					items: response.items?.map(item => item.name) || []
+				});
+				
+				// Cache the projects for state restoration
+				if (response.success && response.items) {
+					this.cachedProjects = response.items;
+					this.webviewState.availableProjects = response.items;
+				}
+				
+				const message = {
+					type: 'connectionStatus',
+					connected: this.connected,
+					url: this.credentials.url,
+					username: this.credentials.username,
+					project: this.credentials.project,
+					availableProjects: response.success ? response.items : [],
+					projectListError: !response.success ? (response.error || 'Failed to fetch projects') : undefined
+				};
+				
+				this.debugLog('Sending message to webview with projects', message);
+				this._view.webview.postMessage(message);
+				
+				// Show user notification if no projects found
+				if (response.success && response.items.length === 0) {
+					vscode.window.showWarningMessage('No projects found in /apps/remote/. Check if projects exist on the server.');
+				} else if (!response.success) {
+					vscode.window.showErrorMessage(`Failed to load projects: ${response.error}`);
+				}
+			} catch (error: any) {
+				this.debugLog('Error fetching projects for webview', { error: error.message, stack: error.stack });
+				vscode.window.showErrorMessage(`Error loading projects: ${error.message}`);
+				this.updateWebview(); // Fallback to regular update
+			}
+		}
+	}
+
 	// Force update webview with current connection state
 	public forceUpdateWebview() {
 		this.debugLog('Force updating webview with current state', {
@@ -125,6 +195,34 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			hasProvider: !!this.fsProvider
 		});
 		this.updateWebview();
+	}
+
+	// Restore webview state after visibility change
+	private restoreWebviewState() {
+		if (this._view && this.connected && this.credentials) {
+			this.debugLog('Restoring webview state', {
+				hasCachedProjects: this.cachedProjects.length > 0,
+				cachedProjectCount: this.cachedProjects.length
+			});
+
+			if (this.cachedProjects.length > 0) {
+				const message = {
+					type: 'connectionStatus',
+					connected: this.connected,
+					url: this.credentials.url,
+					username: this.credentials.username,
+					project: this.credentials.project,
+					availableProjects: this.cachedProjects
+				};
+				
+				this.debugLog('Sending cached projects to webview', message);
+				this._view.webview.postMessage(message);
+			} else {
+				// If no cached projects, fetch them again
+				this.debugLog('No cached projects, fetching fresh data');
+				this.updateWebviewWithProjects();
+			}
+		}
 	}
 
 	// Auto-reconnect if credentials are available
@@ -186,11 +284,8 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				}
 				if (this.globalFileIndex) {
 					this.globalFileIndex.setCredentials(this.credentials);
-					// Start indexing after credentials are set
-					this.globalFileIndex.rebuildIndex().catch(error => {
-						this.debugLog('Error rebuilding index during auto-reconnect', { error: error.message });
-					});
-					this.debugLog('Credentials set for file index during auto-reconnect');
+					// Note: Indexing will start when workspace is activated, not during auto-reconnect
+					this.debugLog('Credentials set for file index during auto-reconnect - indexing deferred until workspace activation');
 				}
 				
 				// Create stub files after auto-reconnect
@@ -258,26 +353,17 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	async connect(url: string, username: string, password: string, project?: string) {
-		this.debugLog('Starting connection process', { url, username, project });
+	async connect(url: string, username: string, password: string) {
+		this.debugLog('Starting connection process', { url, username });
 		
 		try {
-			if (!project) {
-				this.debugLog('No project name provided, sending error');
-				this._view?.webview.postMessage({
-					type: 'connectionError',
-					error: 'Project name is required'
-				});
-				return;
-			}
-
 			// Clean URL to base server URL
 			const baseUrl = this.getBaseUrl(url);
-			this.debugLog('URL processing', { originalUrl: url, baseUrl, project });
+			this.debugLog('URL processing', { originalUrl: url, baseUrl });
 
-			// Validate credentials by testing connection
+			// Validate credentials by testing connection to base URL
 			this.debugLog('Validating credentials...');
-			const tempCredentials = { url: baseUrl, username, password, project };
+			const tempCredentials = { url: baseUrl, username, password };
 			const isValid = await this.validateCredentials(tempCredentials);
 			
 			if (!isValid) {
@@ -308,7 +394,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			// Initialize cache warming and file system
 			await this.fsProvider.initialize();
 			
-			this.debugLog('FileSystemProvider created', { baseUrl, project });
+			this.debugLog('FileSystemProvider created', { baseUrl });
 			
 			// Set the real provider in the placeholder
 			if (this.globalPlaceholderProvider) {
@@ -332,11 +418,8 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			}
 			if (this.globalFileIndex) {
 				this.globalFileIndex.setCredentials(this.credentials);
-				// Start indexing after credentials are set
-				this.globalFileIndex.rebuildIndex().catch(error => {
-					this.debugLog('Error rebuilding index during connect', { error: error.message });
-				});
-				this.debugLog('Credentials set for file index');
+				// Note: Do not start indexing here - wait until project is added to workspace
+				this.debugLog('Credentials set for file index - indexing deferred until workspace addition');
 			}
 			
 			// Create stub files after connection is established
@@ -350,10 +433,10 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			}, 1000);
 			
 			this.debugLog('Updating webview...');
-			this.updateWebview();
+			await this.updateWebviewWithProjects();
 			this.debugLog('Webview updated successfully');
 			
-			vscode.window.showInformationMessage(`Connected to edoc Automate server: ${baseUrl} (Project: ${project})`);
+			vscode.window.showInformationMessage(`Connected to edoc Automate server: ${baseUrl}`);
 			this.debugOutput.show();
 			
 			return this.fsProvider;
@@ -371,6 +454,10 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		this.credentials = null;
 		this.connected = false;
 		this.fsProvider = null;
+		
+		// Clear cached state
+		this.cachedProjects = [];
+		this.webviewState = {};
 		
 		// Clear the real provider from the placeholder
 		if (this.globalPlaceholderProvider) {
@@ -424,11 +511,8 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				}
 				if (this.globalFileIndex) {
 					this.globalFileIndex.setCredentials(this.credentials);
-					// Start indexing after credentials are set
-					this.globalFileIndex.rebuildIndex().catch(error => {
-						this.debugLog('Error rebuilding index during restore', { error: error.message });
-					});
-					this.debugLog('Credentials set for file index during restore');
+					// Note: Indexing will start when workspace is activated, not during restore
+					this.debugLog('Credentials set for file index during restore - indexing deferred until workspace activation');
 				}
 				
 				// Create stub files after restore
@@ -544,78 +628,8 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	async openFiles() {
-		if (!this.fsProvider || !this.credentials?.project) {
-			vscode.window.showErrorMessage('Not connected to edoc Automate server');
-			return;
-		}
+	// Note: openFiles method removed - workspace management now handled by WorkspaceManager
 
-		this.debugLog('Opening files - ensuring connection is active', { 
-			hasProvider: !!this.fsProvider, 
-			hasCredentials: !!this.credentials,
-			connected: this.connected,
-			project: this.credentials?.project 
-		});
-
-		// Ensure the global placeholder provider has the real provider set
-		if (this.globalPlaceholderProvider && this.fsProvider) {
-			this.debugLog('Setting real provider in global placeholder');
-			this.globalPlaceholderProvider.setRealProvider(this.fsProvider);
-		} else {
-			this.debugLog('Warning: Global placeholder provider or fs provider not available');
-		}
-
-		// Add WebDAV as a workspace folder to integrate with VS Code's native explorer
-		const workspaceFolder: vscode.WorkspaceFolder = {
-			uri: vscode.Uri.parse(`webdav:/`),
-			name: this.credentials.project, // Use just the project name
-			index: 0
-		};
-
-		this.debugLog('Adding WebDAV workspace folder', { workspaceFolder });
-
-		// Add the workspace folder to VS Code
-		const success = vscode.workspace.updateWorkspaceFolders(0, 0, workspaceFolder);
-		
-		if (success) {
-			this.debugLog('Workspace folder added successfully');
-			vscode.window.showInformationMessage(`edoc Automate project "${this.credentials.project}" added to workspace`);
-			
-			// Don't update webview after adding to workspace to prevent reset
-			// The connection should remain intact
-			this.debugLog('Preserving connection state after workspace addition');
-			
-			// Start file indexing to make them searchable
-			if (this.fsProvider && this.fsProvider.getFileIndex()) {
-				setTimeout(async () => {
-					await this.fsProvider!.getFileIndex()?.quickIndex();
-					this.debugLog('Files indexed after workspace addition');
-				}, 1000);
-			}
-			
-			// Create stub files after workspace is added
-			if (this.globalStubFileCreator) {
-				setTimeout(() => {
-					this.globalStubFileCreator!().catch(error => {
-						this.debugLog('Error creating stub files after workspace addition', { error: error.message });
-					});
-				}, 2000);
-			}
-			
-			// Force refresh the explorer to show the new files
-			await vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
-		} else {
-			this.debugLog('Failed to add workspace folder');
-			vscode.window.showErrorMessage('Failed to add edoc Automate folder to workspace');
-		}
-	}
-
-	private extractProjectFromUrl(url: string): string | null {
-		// Extract project name from URL pattern: .../apps/remote/PROJECT_NAME
-		const remotePattern = /\/apps\/remote\/([^\/\?#]+)/;
-		const match = url.match(remotePattern);
-		return match ? match[1] : null;
-	}
 
 	private getBaseUrl(url: string): string {
 		// Remove /apps/remote/project_name from the URL to get base server URL
@@ -632,17 +646,20 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 
 	private async validateCredentials(credentials: WebDAVCredentials): Promise<boolean> {
 		try {
-			this.debugLog('Testing edoc Automate connection', { url: credentials.url, project: credentials.project });
+			this.debugLog('Testing edoc Automate connection', { url: credentials.url });
 			
-			// Test connection by attempting to list the project root directory
-			const testURL = `${credentials.url}/apps/remote/${credentials.project}/`;
+			// Test connection by attempting to list the apps/remote directory
+			const testURL = `${credentials.url}/apps/remote/`;
 			
 			const response = await fetch(testURL, {
 				method: 'GET',
 				headers: {
 					'Authorization': `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`,
 					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-					'User-Agent': 'VSCode-edoc-Automate-Extension'
+					'User-Agent': 'VSCode-edoc-Automate-Extension',
+					'Cache-Control': 'no-cache, no-store, must-revalidate',
+					'Pragma': 'no-cache',
+					'Expires': '0'
 				},
 				mode: 'cors',
 				credentials: 'include'
@@ -674,5 +691,195 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			
 			return false;
 		}
+	}
+
+	/**
+	 * Add a specific project to workspace
+	 */
+	async addProjectToWorkspace(projectName: string, customName?: string): Promise<void> {
+		if (!this.credentials) {
+			vscode.window.showErrorMessage('Not connected to edoc Automate server');
+			return;
+		}
+
+		try {
+			// Create credentials for the selected project
+			const projectCredentials = {
+				...this.credentials,
+				project: projectName
+			};
+
+			const workspaceId = await this.workspaceManager.addWorkspace(projectCredentials, customName);
+			const fsProvider = await this.workspaceManager.activateWorkspace(workspaceId);
+			
+			if (fsProvider) {
+				// Set up providers for the new workspace
+				this.setupProvidersForWorkspace(fsProvider, workspaceId);
+				this.sendWorkspaceList();
+				
+				// Clear the custom name input and project selection
+				this._view?.webview.postMessage({
+					type: 'clearWorkspaceForm'
+				});
+			}
+		} catch (error: any) {
+			this.debugLog('Error adding project to workspace', { projectName, error: error.message });
+			vscode.window.showErrorMessage(`Failed to add project workspace: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Add current connection to workspace
+	 */
+	async addToWorkspace(customName?: string): Promise<void> {
+		if (!this.credentials) {
+			vscode.window.showErrorMessage('Not connected to edoc Automate server');
+			return;
+		}
+
+		try {
+			const workspaceId = await this.workspaceManager.addWorkspace(this.credentials, customName);
+			const fsProvider = await this.workspaceManager.activateWorkspace(workspaceId);
+			
+			if (fsProvider) {
+				// Set up providers for the new workspace
+				this.setupProvidersForWorkspace(fsProvider, workspaceId);
+				this.sendWorkspaceList();
+				
+				// Clear the custom name input
+				this._view?.webview.postMessage({
+					type: 'clearWorkspaceName'
+				});
+			}
+		} catch (error: any) {
+			this.debugLog('Error adding workspace', { error: error.message });
+			vscode.window.showErrorMessage(`Failed to add workspace: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Handle workspace actions (activate, deactivate, rename, delete)
+	 */
+	async handleWorkspaceAction(action: string, workspaceId: string, data: any): Promise<void> {
+		try {
+			switch (action) {
+				case 'activate':
+					const fsProvider = await this.workspaceManager.activateWorkspace(workspaceId);
+					if (fsProvider) {
+						this.setupProvidersForWorkspace(fsProvider, workspaceId);
+					}
+					break;
+					
+				case 'deactivate':
+					await this.workspaceManager.deactivateWorkspace(workspaceId);
+					// Clean up provider registration for this workspace
+					this.cleanupProvidersForWorkspace(workspaceId);
+					break;
+					
+				case 'rename':
+					if (data.newName) {
+						await this.workspaceManager.renameWorkspace(workspaceId, data.newName);
+					}
+					break;
+					
+				case 'delete':
+					const workspace = this.workspaceManager.getWorkspaces().find(w => w.id === workspaceId);
+					if (workspace) {
+						const confirm = await vscode.window.showWarningMessage(
+							`Are you sure you want to delete workspace "${workspace.name}"?`,
+							'Delete', 'Cancel'
+						);
+						if (confirm === 'Delete') {
+							// Clean up provider registration before removing workspace
+							this.cleanupProvidersForWorkspace(workspaceId);
+							await this.workspaceManager.removeWorkspace(workspaceId);
+						}
+					}
+					break;
+			}
+			
+			this.sendWorkspaceList();
+		} catch (error: any) {
+			this.debugLog('Error handling workspace action', { action, workspaceId, error: error.message });
+			vscode.window.showErrorMessage(`Failed to ${action} workspace: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send workspace list to webview
+	 */
+	private sendWorkspaceList(): void {
+		const workspaces = this.workspaceManager.getWorkspaces();
+		this._view?.webview.postMessage({
+			type: 'workspaceList',
+			workspaces: workspaces
+		});
+	}
+
+	/**
+	 * Setup providers for a workspace
+	 */
+	private setupProvidersForWorkspace(fsProvider: WebDAVFileSystemProvider, workspaceId: string): void {
+		const fileIndex = this.workspaceManager.getFileIndex(workspaceId);
+		const workspace = this.workspaceManager.getWorkspaces().find(w => w.id === workspaceId);
+		
+		if (!workspace || !fileIndex) return;
+
+		// Set up providers for this workspace
+		if (this.globalPlaceholderProvider) {
+			// Register provider for this specific project
+			if (workspace.credentials.project && typeof this.globalPlaceholderProvider.setRealProviderForProject === 'function') {
+				this.globalPlaceholderProvider.setRealProviderForProject(workspace.credentials.project, fsProvider);
+			} else {
+				// Fallback to default provider method
+				this.globalPlaceholderProvider.setRealProvider(fsProvider);
+			}
+		}
+
+		if (this.globalFileSearchProvider) {
+			this.globalFileSearchProvider.setCredentials(workspace.credentials);
+		}
+		
+		if (this.globalTextSearchProvider) {
+			this.globalTextSearchProvider.setCredentials(workspace.credentials);
+		}
+		
+		if (this.globalPhpDefinitionProvider) {
+			this.globalPhpDefinitionProvider.setCredentials(workspace.credentials);
+			this.globalPhpDefinitionProvider.setFileSystemProvider(fsProvider);
+		}
+
+		// Start indexing
+		fileIndex.rebuildIndex().catch(error => {
+			this.debugLog('Error rebuilding index for workspace', { workspaceId, error: error.message });
+		});
+
+		// Create stub files
+		if (this.globalStubFileCreator) {
+			this.globalStubFileCreator().catch(error => {
+				this.debugLog('Error creating stub files for workspace', { workspaceId, error: error.message });
+			});
+		}
+	}
+
+	/**
+	 * Clean up providers for a workspace
+	 */
+	private cleanupProvidersForWorkspace(workspaceId: string): void {
+		const workspace = this.workspaceManager.getWorkspaces().find(w => w.id === workspaceId);
+		
+		if (workspace && workspace.credentials.project && this.globalPlaceholderProvider) {
+			if (typeof this.globalPlaceholderProvider.setRealProviderForProject === 'function') {
+				this.globalPlaceholderProvider.setRealProviderForProject(workspace.credentials.project, null);
+				this.debugLog('Provider cleaned up for project', { project: workspace.credentials.project });
+			}
+		}
+	}
+
+	/**
+	 * Dispose resources
+	 */
+	dispose(): void {
+		this.workspaceManager.dispose();
 	}
 }

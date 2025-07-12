@@ -516,14 +516,6 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			}
 		}
 
-		// Check cache for real files
-		if (this._cache) {
-			const cached = this._cache.getFile(path);
-			if (cached) {
-				this._debugLog('File cache hit', { path, size: cached.length });
-				return cached;
-			}
-		}
 		
 		// Fetch from WebDAV server using API
 		if (!this._webdavApi) {
@@ -537,11 +529,6 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			throw vscode.FileSystemError.FileNotFound();
 		}
 
-		// Cache the file content
-		if (this._cache) {
-			this._cache.setFile(path, response.content);
-			this._debugLog('Cached file content', { path, size: response.content.length });
-		}
 
 		return response.content;
 	}
@@ -581,11 +568,10 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 			throw vscode.FileSystemError.Unavailable();
 		}
 		
-		// Update cache for the file and invalidate parent directory
+		// Invalidate parent directory cache
 		if (this._cache) {
-			this._cache.setFile(path, content);
 			this._cache.deleteDirectory(dirPath); // Parent directory changed
-			this._debugLog('Updated cache after file write', { path, size: content.length, invalidatedDir: dirPath });
+			this._debugLog('Invalidated parent directory cache after file write', { invalidatedDir: dirPath });
 		}
 		
 		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
@@ -618,10 +604,11 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 				throw vscode.FileSystemError.Unavailable();
 			}
 			
-			// Invalidate cache
+			// Invalidate parent directory cache
 			if (this._cache) {
-				this._cache.deleteFile(path);
-				this._debugLog('Deleted file from cache', { path });
+				const dirPath = this.getParentPath(path);
+				this._cache.deleteDirectory(dirPath);
+				this._debugLog('Invalidated parent directory cache after deletion', { dirPath });
 			}
 		}
 		
@@ -659,11 +646,13 @@ export class WebDAVFileSystemProvider implements vscode.FileSystemProvider {
 				throw vscode.FileSystemError.Unavailable();
 			}
 			
-			// Invalidate cache for both old and new paths
+			// Invalidate parent directory cache for both paths
 			if (this._cache) {
-				this._cache.deleteFile(oldPath);
-				this._cache.deleteFile(newPath);
-				this._debugLog('Invalidated cache for renamed file', { oldPath, newPath });
+				const oldDirPath = this.getParentPath(oldPath);
+				const newDirPath = this.getParentPath(newPath);
+				this._cache.deleteDirectory(oldDirPath);
+				this._cache.deleteDirectory(newDirPath);
+				this._debugLog('Invalidated parent directory cache for renamed file', { oldDirPath, newDirPath });
 			}
 		}
 		
