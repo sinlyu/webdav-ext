@@ -116,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
 	
 	// Set debug loggers for all providers and index
 	globalFileSearchProvider.setDebugLogger(debugLog);
-	globalTextSearchProvider.setDebugLogger(debugLog);
+	// globalTextSearchProvider now has built-in debug logging
 	globalWorkspaceSymbolProvider.setDebugLogger(debugLog);
 	globalDocumentSymbolProvider.setDebugLogger(debugLog);
 	globalCustomSearchProvider.setDebugLogger(debugLog);

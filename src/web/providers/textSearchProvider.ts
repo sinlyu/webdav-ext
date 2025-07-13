@@ -41,10 +41,12 @@ export class WebDAVTextSearchProvider {
 		try {
 			// Use index if available, otherwise fall back to directory traversal
 			if (this._fileIndex) {
+				this.debugLog('Using file index for search');
 				await this._fileIndex.ensureIndexed();
 				await this.searchIndexedFiles(query, progress, token);
 				this.debugLog('Text search completed using index');
 			} else {
+				this.debugLog('Using directory traversal for search (no index)');
 				// Fallback to directory traversal
 				await this.searchInDirectory('', query, options, progress, token);
 				this.debugLog('Text search completed using directory traversal');
@@ -62,12 +64,16 @@ export class WebDAVTextSearchProvider {
 		token: vscode.CancellationToken
 	): Promise<void> {
 		if (!this._fileIndex) {
+			this.debugLog('No file index available for search');
 			return;
 		}
 
 		this.debugLog('Starting indexed file search');
 		const allFiles = this._fileIndex.getAllFiles();
 		let searchedCount = 0;
+		let skippedCount = 0;
+
+		this.debugLog('File index contains files', { totalFiles: allFiles.length, sampleFiles: allFiles.slice(0, 5) });
 
 		for (const filePath of allFiles) {
 			if (token.isCancellationRequested) {
@@ -77,14 +83,19 @@ export class WebDAVTextSearchProvider {
 
 			const fileName = this.getFileName(filePath);
 			if (this.shouldSearchFile(fileName)) {
+				this.debugLog('Searching in file', { filePath, fileName });
 				await this.searchInFile(filePath, query, progress, token);
 				searchedCount++;
+			} else {
+				skippedCount++;
+				this.debugLog('Skipping file (not text file)', { filePath, fileName });
 			}
 		}
 
 		this.debugLog('Indexed file search completed', { 
 			totalFiles: allFiles.length, 
-			searchedFiles: searchedCount 
+			searchedFiles: searchedCount,
+			skippedFiles: skippedCount
 		});
 	}
 
@@ -142,8 +153,16 @@ export class WebDAVTextSearchProvider {
 
 	private shouldSearchFile(fileName: string): boolean {
 		// Search in common text files
-		const textExtensions = ['.txt', '.js', '.ts', '.json', '.css', '.html', '.htm', '.xml', '.md', '.py', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt'];
-		return textExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+		const textExtensions = [
+			'.txt', '.js', '.ts', '.json', '.css', '.html', '.htm', '.xml', '.md', 
+			'.py', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.rb', 
+			'.go', '.rs', '.swift', '.kt', '.yml', '.yaml', '.ini', '.conf', 
+			'.log', '.sh', '.bat', '.sql', '.vue', '.jsx', '.tsx', '.scss', 
+			'.sass', '.less', '.twig', '.blade.php'
+		];
+		const shouldSearch = textExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+		this.debugLog('File search filter check', { fileName, shouldSearch, extensions: textExtensions });
+		return shouldSearch;
 	}
 
 	private shouldSearchDirectory(dirName: string): boolean {
@@ -345,14 +364,6 @@ export class WebDAVTextSearchProvider {
 
 
 
-	// Debug logging placeholder - will be provided by extension
-	private debugLog(_message: string, _data?: any) {
-		// This will be overridden by setDebugLogger
-	}
-
-	setDebugLogger(logger: (message: string, data?: any) => void) {
-		this.debugLog = logger;
-	}
 
 	/**
 	 * Normalizes file paths for URI creation, handling virtual file prefixes
@@ -372,5 +383,9 @@ export class WebDAVTextSearchProvider {
 		}
 		
 		return normalizedPath;
+	}
+
+	private debugLog(message: string, data?: any): void {
+		console.log(`[WebDAVTextSearch] ${message}`, data || '');
 	}
 }
