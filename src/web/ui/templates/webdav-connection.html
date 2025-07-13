@@ -306,7 +306,7 @@
 		.workspace-empty {
 			text-align: center;
 			padding: 40px 20px;
-			color: var(--vscode-descriptionForeground);
+			color: var(--vscode-descriptionForeground, var(--vscode-disabledForeground, #8c8c8c));
 			font-size: 13px;
 		}
 		.project-message {
@@ -317,19 +317,19 @@
 			border-left: 3px solid;
 		}
 		.project-error {
-			color: var(--vscode-errorForeground);
-			background-color: var(--vscode-inputValidation-errorBackground);
-			border-left-color: var(--vscode-errorForeground);
+			color: var(--vscode-errorForeground, #f14c4c);
+			background-color: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, 0.1));
+			border-left-color: var(--vscode-errorForeground, #f14c4c);
 		}
 		.project-warning {
-			color: var(--vscode-editorWarning-foreground);
-			background-color: var(--vscode-inputValidation-warningBackground);
-			border-left-color: var(--vscode-editorWarning-foreground);
+			color: var(--vscode-editorWarning-foreground, var(--vscode-notificationsWarningIcon-foreground, #bf8803));
+			background-color: var(--vscode-inputValidation-warningBackground, var(--vscode-editorWarning-background, rgba(191, 136, 3, 0.1)));
+			border-left-color: var(--vscode-editorWarning-foreground, var(--vscode-notificationsWarningIcon-foreground, #bf8803));
 		}
 		.project-success {
-			color: var(--vscode-testing-iconPassed);
-			background-color: var(--vscode-inputValidation-infoBackground);
-			border-left-color: var(--vscode-testing-iconPassed);
+			color: var(--vscode-testing-iconPassed, var(--vscode-gitDecoration-addedResourceForeground, #73c991));
+			background-color: var(--vscode-inputValidation-infoBackground, var(--vscode-editorInfo-background, rgba(115, 201, 145, 0.1)));
+			border-left-color: var(--vscode-testing-iconPassed, var(--vscode-gitDecoration-addedResourceForeground, #73c991));
 		}
 	</style>
 </head>

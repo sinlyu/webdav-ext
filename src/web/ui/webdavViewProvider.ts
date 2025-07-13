@@ -102,6 +102,10 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 						this.debugLog('Processing workspaceAction message', { action: data.action, workspaceId: data.workspaceId });
 						await this.handleWorkspaceAction(data.action, data.workspaceId, data);
 						break;
+					case 'showInputBox':
+						this.debugLog('Processing showInputBox message', { prompt: data.prompt, workspaceId: data.workspaceId });
+						await this.handleShowInputBox(data.prompt, data.value, data.workspaceId);
+						break;
 					default:
 						this.debugLog('Unknown message type', { type: data.type });
 				}
@@ -651,6 +655,9 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			// Test connection by attempting to list the apps/remote directory
 			const testURL = `${credentials.url}/apps/remote/`;
 			
+			// Detect if we're running on desktop VS Code vs web
+			const isDesktop = typeof process !== 'undefined' && process.versions && process.versions.electron;
+			
 			const response = await fetch(testURL, {
 				method: 'GET',
 				headers: {
@@ -661,7 +668,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					'Pragma': 'no-cache',
 					'Expires': '0'
 				},
-				mode: 'cors',
+				mode: isDesktop ? 'no-cors' : 'cors',
 				credentials: 'include'
 			});
 			
@@ -802,6 +809,32 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		} catch (error: any) {
 			this.debugLog('Error handling workspace action', { action, workspaceId, error: error.message });
 			vscode.window.showErrorMessage(`Failed to ${action} workspace: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Handle input box request from webview
+	 */
+	async handleShowInputBox(prompt: string, defaultValue: string, workspaceId: string): Promise<void> {
+		try {
+			const newName = await vscode.window.showInputBox({
+				prompt: prompt,
+				value: defaultValue,
+				validateInput: (value) => {
+					if (!value || !value.trim()) {
+						return 'Workspace name cannot be empty';
+					}
+					return null;
+				}
+			});
+
+			if (newName && newName.trim() && newName.trim() !== defaultValue) {
+				await this.workspaceManager.renameWorkspace(workspaceId, newName.trim());
+				this.sendWorkspaceList();
+			}
+		} catch (error: any) {
+			this.debugLog('Error handling input box', { error: error.message });
+			vscode.window.showErrorMessage(`Failed to rename workspace: ${error.message}`);
 		}
 	}
 

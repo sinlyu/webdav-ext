@@ -1,5 +1,6 @@
 import { WebDAVCredentials, WebDAVFileItem } from '../types';
 import { parseDirectoryHTML } from '../utils/htmlUtils';
+import { getFetchMode } from '../utils/platformUtils';
 
 export interface WebDAVRequestOptions {
 	method?: string;
@@ -89,7 +90,7 @@ export class WebDAVApi {
 		const requestOptions: RequestInit = {
 			method,
 			headers: this.mergeHeaders(headers),
-			mode: 'cors',
+			mode: getFetchMode(),
 			credentials: 'include'
 		};
 
@@ -456,7 +457,7 @@ export class WebDAVApi {
 			const response = await fetch(appsRemoteUrl, {
 				method: 'GET',
 				headers,
-				mode: 'cors',
+				mode: getFetchMode(),
 				credentials: 'include',
 				signal: controller.signal
 			});

@@ -126,22 +126,33 @@
 	}
 	
 	function handleWorkspaceAction(action, workspaceId, data = {}) {
+		console.log('handleWorkspaceAction called:', { action, workspaceId, data });
 		vscode.postMessage({
 			type: 'workspaceAction',
 			action: action,
 			workspaceId: workspaceId,
 			...data
 		});
+		console.log('Message sent to backend');
 	}
 	
 	function renameWorkspace(workspaceId) {
+		console.log('renameWorkspace called with ID:', workspaceId);
 		const workspace = workspaces.find(w => w.id === workspaceId);
-		if (!workspace) return;
-
-		const newName = prompt('Enter new workspace name:', workspace.name);
-		if (newName && newName.trim() && newName.trim() !== workspace.name) {
-			handleWorkspaceAction('rename', workspaceId, { newName: newName.trim() });
+		if (!workspace) {
+			console.error('Workspace not found:', workspaceId);
+			return;
 		}
+
+		console.log('Found workspace:', workspace);
+		
+		// Use VS Code's input box as primary method
+		vscode.postMessage({
+			type: 'showInputBox',
+			prompt: 'Enter new workspace name:',
+			value: workspace.name,
+			workspaceId: workspaceId
+		});
 	}
 	
 	function handleCredentialsChange() {

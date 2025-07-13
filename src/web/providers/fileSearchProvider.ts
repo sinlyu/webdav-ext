@@ -141,6 +141,9 @@ export class WebDAVFileSearchProvider {
 				? `${this._credentials!.url}/apps/remote/${this._credentials!.project}/${cleanDirPath}`
 				: `${this._credentials!.url}/apps/remote/${this._credentials!.project}/`;
 			
+			// Detect if we're running on desktop VS Code vs web
+			const isDesktop = typeof process !== 'undefined' && process.versions && process.versions.electron;
+			
 			const response = await fetch(dirURL, {
 				method: 'GET',
 				headers: {
@@ -148,7 +151,7 @@ export class WebDAVFileSearchProvider {
 					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
 					'User-Agent': 'VSCode-WebDAV-Extension'
 				},
-				mode: 'cors',
+				mode: isDesktop ? 'no-cors' : 'cors',
 				credentials: 'include'
 			});
 			
