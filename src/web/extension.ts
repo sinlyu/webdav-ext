@@ -115,7 +115,7 @@ export function activate(context: vscode.ExtensionContext) {
 	globalFileIndex = new WebDAVFileIndex();
 	
 	// Set debug loggers for all providers and index
-	globalFileSearchProvider.setDebugLogger(debugLog);
+	// globalFileSearchProvider now has built-in debug logging
 	// globalTextSearchProvider now has built-in debug logging
 	globalWorkspaceSymbolProvider.setDebugLogger(debugLog);
 	globalDocumentSymbolProvider.setDebugLogger(debugLog);
@@ -168,9 +168,9 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 	});
 	
-	// Set file index for all providers
-	globalFileSearchProvider.setFileIndex(globalFileIndex);
-	globalTextSearchProvider.setFileIndex(globalFileIndex);
+	// Set file index for non-search providers (search providers now use direct traversal)
+	// globalFileSearchProvider - now uses direct traversal only
+	// globalTextSearchProvider - now uses direct traversal only
 	globalWorkspaceSymbolProvider.setFileIndex(globalFileIndex);
 	globalCustomSearchProvider.setFileIndex(globalFileIndex);
 	globalPhpDefinitionProvider.setFileIndex(globalFileIndex);

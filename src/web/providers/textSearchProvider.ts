@@ -39,18 +39,10 @@ export class WebDAVTextSearchProvider {
 		});
 
 		try {
-			// Use index if available, otherwise fall back to directory traversal
-			if (this._fileIndex) {
-				this.debugLog('Using file index for search');
-				await this._fileIndex.ensureIndexed();
-				await this.searchIndexedFiles(query, progress, token);
-				this.debugLog('Text search completed using index');
-			} else {
-				this.debugLog('Using directory traversal for search (no index)');
-				// Fallback to directory traversal
-				await this.searchInDirectory('', query, options, progress, token);
-				this.debugLog('Text search completed using directory traversal');
-			}
+			// Always use directory traversal for more reliable search
+			this.debugLog('Using directory traversal for search (indexing disabled)');
+			await this.searchInDirectory('', query, options, progress, token);
+			this.debugLog('Text search completed using directory traversal');
 			return { limitHit: false };
 		} catch (error: any) {
 			this.debugLog('Text search error', { error: error.message, stack: error.stack });

@@ -35,21 +35,10 @@ export class WebDAVFileSearchProvider {
 		try {
 			let results: vscode.Uri[] = [];
 
-			// Use index if available, otherwise fall back to directory traversal
-			if (this._fileIndex) {
-				await this._fileIndex.ensureIndexed();
-				const indexedResults = this._fileIndex.searchFiles(searchPattern);
-				results = indexedResults.map(path => {
-					// Normalize path for URI creation, handling virtual file prefixes
-					const normalizedPath = this.normalizeFilePathForUri(path);
-					return vscode.Uri.parse(`webdav:${normalizedPath}`);
-				});
-				this.debugLog('File search completed using index', { resultCount: results.length });
-			} else {
-				// Fallback to directory traversal
-				await this.searchDirectory('', searchPattern, results, token);
-				this.debugLog('File search completed using directory traversal', { resultCount: results.length });
-			}
+			// Always use directory traversal for more reliable search
+			this.debugLog('Using directory traversal for file search (indexing disabled)');
+			await this.searchDirectory('', searchPattern, results, token);
+			this.debugLog('File search completed using directory traversal', { resultCount: results.length });
 
 			return results;
 		} catch (error: any) {
@@ -169,14 +158,6 @@ export class WebDAVFileSearchProvider {
 
 
 
-	// Debug logging placeholder - will be provided by extension
-	private debugLog(_message: string, _data?: any) {
-		// This will be overridden by setDebugLogger
-	}
-
-	setDebugLogger(logger: (message: string, data?: any) => void) {
-		this.debugLog = logger;
-	}
 
 	/**
 	 * Normalizes file paths for URI creation, handling virtual file prefixes
@@ -196,5 +177,9 @@ export class WebDAVFileSearchProvider {
 		}
 		
 		return normalizedPath;
+	}
+
+	private debugLog(message: string, data?: any): void {
+		console.log(`[WebDAVFileSearch] ${message}`, data || '');
 	}
 }
