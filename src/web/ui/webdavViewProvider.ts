@@ -8,6 +8,7 @@ import { WebDAVFileIndex } from '../core/fileIndex';
 import { TemplateLoader } from './templates/templateLoader';
 import { WebDAVApi } from '../core/webdavApi';
 import { WorkspaceManager } from '../services/workspaceManager';
+import { getFetchMode } from '../utils/platformUtils';
 
 export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'webdavConnection';
@@ -655,9 +656,6 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			// Test connection by attempting to list the apps/remote directory
 			const testURL = `${credentials.url}/apps/remote/`;
 			
-			// Detect if we're running on desktop VS Code vs web
-			const isDesktop = typeof process !== 'undefined' && process.versions && process.versions.electron;
-			
 			const response = await fetch(testURL, {
 				method: 'GET',
 				headers: {
@@ -668,7 +666,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					'Pragma': 'no-cache',
 					'Expires': '0'
 				},
-				mode: isDesktop ? 'no-cors' : 'cors',
+				mode: getFetchMode(),
 				credentials: 'include'
 			});
 			

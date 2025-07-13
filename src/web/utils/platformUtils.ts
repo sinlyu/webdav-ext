@@ -13,9 +13,21 @@ export function isDesktopVSCode(): boolean {
 /**
  * Gets the appropriate fetch mode for the current platform
  * Desktop VS Code can bypass CORS entirely, while web VS Code must respect CORS
- * @returns 'no-cors' for desktop, 'cors' for web
+ * However, no-cors mode limits response access, so we'll use cors with credentials
+ * @returns 'cors' for all platforms to maintain response access
  */
 export function getFetchMode(): RequestMode {
+	// Always use 'cors' mode to maintain access to response properties
+	// Desktop VS Code should handle CORS better than web, but we still need response access
+	return 'cors';
+}
+
+/**
+ * Gets the appropriate fetch mode specifically for scenarios where response inspection is not needed
+ * This can use no-cors on desktop for fire-and-forget requests
+ * @returns 'no-cors' for desktop, 'cors' for web
+ */
+export function getFireAndForgetFetchMode(): RequestMode {
 	return isDesktopVSCode() ? 'no-cors' : 'cors';
 }
 

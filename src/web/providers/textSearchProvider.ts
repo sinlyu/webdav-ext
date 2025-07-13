@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { WebDAVCredentials, WebDAVFileItem } from '../types';
+import { getFetchMode } from '../utils/platformUtils';
 import { WebDAVFileIndex } from '../core/fileIndex';
 import { parseDirectoryHTML } from '../utils/htmlUtils';
 
@@ -290,16 +291,13 @@ export class WebDAVTextSearchProvider {
 	private async readFileContent(filePath: string): Promise<string> {
 		const fileURL = `${this._credentials!.url}/apps/remote/${this._credentials!.project}/${filePath}`;
 		
-		// Detect if we're running on desktop VS Code vs web
-		const isDesktop = typeof process !== 'undefined' && process.versions && process.versions.electron;
-		
 		const response = await fetch(fileURL, {
 			method: 'GET',
 			headers: {
 				'Authorization': `Basic ${btoa(`${this._credentials!.username}:${this._credentials!.password}`)}`,
 				'Accept': '*/*'
 			},
-			mode: isDesktop ? 'no-cors' : 'cors',
+			mode: getFetchMode(),
 			credentials: 'include'
 		});
 		
@@ -322,9 +320,6 @@ export class WebDAVTextSearchProvider {
 				? `${this._credentials!.url}/apps/remote/${this._credentials!.project}/${cleanDirPath}`
 				: `${this._credentials!.url}/apps/remote/${this._credentials!.project}/`;
 			
-			// Detect if we're running on desktop VS Code vs web
-			const isDesktop = typeof process !== 'undefined' && process.versions && process.versions.electron;
-			
 			const response = await fetch(dirURL, {
 				method: 'GET',
 				headers: {
@@ -332,7 +327,7 @@ export class WebDAVTextSearchProvider {
 					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
 					'User-Agent': 'VSCode-WebDAV-Extension'
 				},
-				mode: isDesktop ? 'no-cors' : 'cors',
+				mode: getFetchMode(),
 				credentials: 'include'
 			});
 			
