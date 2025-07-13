@@ -131,12 +131,33 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
 			title: "WebDAV: Indexing directories recursively...",
-			cancellable: false
-		}, async (progress) => {
-			// Wait for indexing to complete
+			cancellable: true
+		}, async (progress, token) => {
+			// Wait for indexing to complete with timeout and cancellation support
+			const maxWaitTime = 5 * 60 * 1000; // 5 minutes max
+			const startTime = Date.now();
+			
 			while (globalFileIndex?.isIndexing()) {
+				// Check for cancellation
+				if (token.isCancellationRequested) {
+					debugLog('Indexing cancelled by user');
+					return;
+				}
+				
+				// Check for timeout
+				if (Date.now() - startTime > maxWaitTime) {
+					debugLog('Indexing timeout after 5 minutes');
+					vscode.window.showWarningMessage('WebDAV indexing timed out. The extension may not function properly.');
+					return;
+				}
+				
+				// Update progress
+				const elapsed = Math.round((Date.now() - startTime) / 1000);
+				progress.report({ message: `Indexing... (${elapsed}s)` });
+				
 				await new Promise(resolve => setTimeout(resolve, 500));
 			}
+			
 			const stats = globalFileIndex?.getIndexStats();
 			if (stats) {
 				debugLog('Recursive indexing completed', stats);

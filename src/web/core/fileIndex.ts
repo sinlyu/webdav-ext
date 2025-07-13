@@ -106,8 +106,16 @@ export class WebDAVFileIndex {
 		
 		try {
 			this.clearIndex();
-			this._indexingPromise = this.batchIndexDirectory('');
+			
+			// Add timeout to prevent hanging
+			const indexingPromise = this.batchIndexDirectory('');
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				setTimeout(() => reject(new Error('Index rebuild timed out after 5 minutes')), 5 * 60 * 1000);
+			});
+			
+			this._indexingPromise = Promise.race([indexingPromise, timeoutPromise]);
 			await this._indexingPromise;
+			
 			this._debugLog('Full recursive file index rebuild completed', { 
 				totalFiles: this._fileIndex.size,
 				totalDirectories: this._directoryIndex.size 
@@ -123,7 +131,10 @@ export class WebDAVFileIndex {
 			}
 		} catch (error: any) {
 			this._debugLog('Error rebuilding index', { error: error.message });
-			throw error;
+			// Don't rethrow timeout errors to prevent blocking VS Code
+			if (!error.message.includes('timed out')) {
+				throw error;
+			}
 		} finally {
 			this._isIndexing = false;
 			this._indexingPromise = null;
