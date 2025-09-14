@@ -182,6 +182,21 @@
 			border-radius: 4px;
 			border-left: 3px solid var(--vscode-errorForeground);
 		}
+		.help-text {
+			color: var(--vscode-descriptionForeground);
+			font-size: 12px;
+			margin-top: 6px;
+			display: flex;
+			align-items: flex-start;
+			gap: 6px;
+			line-height: 1.4;
+		}
+		.help-icon {
+			color: var(--vscode-textLink-foreground);
+			font-size: 14px;
+			margin-top: 1px;
+			flex-shrink: 0;
+		}
 		.loading {
 			opacity: 0.6;
 			pointer-events: none;
@@ -344,6 +359,17 @@
 					<div id="urlError" class="error hidden"></div>
 				</div>
 				<div class="form-group">
+					<label for="protocol">Connection Protocol</label>
+					<select id="protocol" required>
+						<option value="http">HTTP/HTTPS (Standard)</option>
+						<option value="webdav">WebDAV Protocol (Native)</option>
+					</select>
+					<div class="help-text">
+						<span class="help-icon">ℹ️</span>
+						<span>WebDAV protocol provides better performance and native WebDAV features (PROPFIND, MKCOL, etc.). HTTP/HTTPS uses standard web requests.</span>
+					</div>
+				</div>
+				<div class="form-group">
 					<label for="username">Username</label>
 					<input type="text" id="username" placeholder="Enter username" required>
 				</div>
@@ -357,7 +383,7 @@
 		<div id="connectionStatus" class="hidden">
 			<div class="status-card">
 				<div class="status-title">
-					<span class="success-indicator">✓</span> Connected to edoc Automate
+					<span class="success-indicator">✓</span> Connected!
 				</div>
 				<div class="status-item">
 					<span class="status-label">Server:</span>

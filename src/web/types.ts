@@ -3,6 +3,7 @@ export interface WebDAVCredentials {
 	username: string;
 	password: string;
 	project?: string;
+	protocol?: string; // 'http' or 'webdav'
 }
 
 export interface WebDAVWorkspace {

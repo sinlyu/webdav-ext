@@ -9,6 +9,8 @@ import { TemplateLoader } from './templates/templateLoader';
 import { WebDAVApi } from '../core/webdavApi';
 import { WorkspaceManager } from '../services/workspaceManager';
 import { getFetchMode } from '../utils/platformUtils';
+import { WebDAVProtocolType, WebDAVProtocolInterface } from '../core/webdavProtocol';
+import { WebDAVProtocolFactory } from '../core/webdavProtocolFactory';
 
 export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'webdavConnection';
@@ -16,6 +18,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 	private credentials: WebDAVCredentials | null = null;
 	private connected = false;
 	private fsProvider: WebDAVFileSystemProvider | null = null;
+	private protocolHandler: WebDAVProtocolInterface | null = null;
 	private workspaceManager: WorkspaceManager;
 	private cachedProjects: any[] = [];
 	private webviewState: any = {};
@@ -33,6 +36,15 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		private readonly debugOutput: vscode.OutputChannel
 	) {
 		this.workspaceManager = new WorkspaceManager(this.globalContext, this.debugLog);
+		
+		// Set workspace manager on search providers for multi-workspace support
+		this.globalFileSearchProvider.setWorkspaceManager(this.workspaceManager);
+		this.globalTextSearchProvider.setWorkspaceManager(this.workspaceManager);
+		
+		// Set workspace manager on PHP definition provider for multi-workspace symbol search
+		if (this.globalPhpDefinitionProvider && 'setWorkspaceManager' in this.globalPhpDefinitionProvider) {
+			(this.globalPhpDefinitionProvider as any).setWorkspaceManager(this.workspaceManager);
+		}
 	}
 
 	public async resolveWebviewView(
@@ -80,8 +92,8 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 						vscode.window.showInformationMessage('Webview test successful!');
 						break;
 					case 'connect':
-						this.debugLog('Processing connect message', { url: data.url, username: data.username });
-						await this.connect(data.url, data.username, data.password);
+						this.debugLog('Processing connect message', { url: data.url, username: data.username, protocol: data.protocol });
+						await this.connect(data.url, data.username, data.password, data.protocol);
 						break;
 					case 'disconnect':
 						this.debugLog('Processing disconnect message');
@@ -258,6 +270,12 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				// Restore connection state
 				this.credentials = storedCredentials;
 				this.connected = true;
+				
+				// Create protocol handler based on stored protocol
+				const protocolType = storedCredentials.protocol === 'webdav' ? WebDAVProtocolType.WEBDAV : WebDAVProtocolType.HTTP;
+				this.protocolHandler = WebDAVProtocolFactory.create(protocolType, this.debugLog);
+				this.debugLog('Protocol handler created during auto-reconnect', { protocolType });
+				
 				this.fsProvider = new WebDAVFileSystemProvider(this.credentials, this.globalContext);
 				
 				// Set dependencies for filesystem provider
@@ -358,17 +376,22 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	async connect(url: string, username: string, password: string) {
-		this.debugLog('Starting connection process', { url, username });
+	async connect(url: string, username: string, password: string, protocol: string = 'http') {
+		this.debugLog('Starting connection process', { url, username, protocol });
 		
 		try {
 			// Clean URL to base server URL
 			const baseUrl = this.getBaseUrl(url);
 			this.debugLog('URL processing', { originalUrl: url, baseUrl });
 
+			// Create protocol handler
+			const protocolType = protocol === 'webdav' ? WebDAVProtocolType.WEBDAV : WebDAVProtocolType.HTTP;
+			this.protocolHandler = WebDAVProtocolFactory.create(protocolType, this.debugLog);
+			this.debugLog('Protocol handler created', { protocolType });
+
 			// Validate credentials by testing connection to base URL
 			this.debugLog('Validating credentials...');
-			const tempCredentials = { url: baseUrl, username, password };
+			const tempCredentials = { url: baseUrl, username, password, protocol };
 			const isValid = await this.validateCredentials(tempCredentials);
 			
 			if (!isValid) {
@@ -459,6 +482,7 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 		this.credentials = null;
 		this.connected = false;
 		this.fsProvider = null;
+		this.protocolHandler = null;
 		
 		// Clear cached state
 		this.cachedProjects = [];
@@ -493,6 +517,12 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 				this.debugLog('Found stored credentials, restoring connection');
 				this.credentials = storedCredentials;
 				this.connected = true;
+				
+				// Create protocol handler based on stored protocol
+				const protocolType = storedCredentials.protocol === 'webdav' ? WebDAVProtocolType.WEBDAV : WebDAVProtocolType.HTTP;
+				this.protocolHandler = WebDAVProtocolFactory.create(protocolType, this.debugLog);
+				this.debugLog('Protocol handler created during restore', { protocolType });
+				
 				this.fsProvider = new WebDAVFileSystemProvider(this.credentials);
 				
 				// Set dependencies for filesystem provider
@@ -720,6 +750,13 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			if (fsProvider) {
 				// Set up providers for the new workspace
 				this.setupProvidersForWorkspace(fsProvider, workspaceId);
+				
+				// Check if credentials were updated during activation and re-register if needed
+				if ((fsProvider as any)._credentialsUpdated) {
+					this.debugLog('Re-registering providers after credential update', { workspaceId });
+					this.setupProvidersForWorkspace(fsProvider, workspaceId);
+				}
+				
 				this.sendWorkspaceList();
 				
 				// Clear the custom name input and project selection
@@ -749,6 +786,13 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 			if (fsProvider) {
 				// Set up providers for the new workspace
 				this.setupProvidersForWorkspace(fsProvider, workspaceId);
+				
+				// Check if credentials were updated during activation and re-register if needed
+				if ((fsProvider as any)._credentialsUpdated) {
+					this.debugLog('Re-registering providers after credential update', { workspaceId });
+					this.setupProvidersForWorkspace(fsProvider, workspaceId);
+				}
+				
 				this.sendWorkspaceList();
 				
 				// Clear the custom name input
@@ -772,6 +816,12 @@ export class WebDAVViewProvider implements vscode.WebviewViewProvider {
 					const fsProvider = await this.workspaceManager.activateWorkspace(workspaceId);
 					if (fsProvider) {
 						this.setupProvidersForWorkspace(fsProvider, workspaceId);
+						
+						// Check if credentials were updated during activation and re-register if needed
+						if ((fsProvider as any)._credentialsUpdated) {
+							this.debugLog('Re-registering providers after credential update during activation', { workspaceId });
+							this.setupProvidersForWorkspace(fsProvider, workspaceId);
+						}
 					}
 					break;
 					

@@ -30,11 +30,15 @@
 		}
 		
 		const urlInput = document.getElementById('url');
+		const protocolSelect = document.getElementById('protocol');
 		const usernameInput = document.getElementById('username');
 		const passwordInput = document.getElementById('password');
 		
 		if (urlInput) {
 			urlInput.addEventListener('input', handleCredentialsChange);
+		}
+		if (protocolSelect) {
+			protocolSelect.addEventListener('change', handleProtocolChange);
 		}
 		if (usernameInput) {
 			usernameInput.addEventListener('input', handleCredentialsChange);
@@ -50,15 +54,17 @@
 		e.preventDefault();
 		
 		const urlInput = document.getElementById('url');
+		const protocolSelect = document.getElementById('protocol');
 		const usernameInput = document.getElementById('username');
 		const passwordInput = document.getElementById('password');
 		
-		if (!urlInput || !usernameInput || !passwordInput) {
+		if (!urlInput || !protocolSelect || !usernameInput || !passwordInput) {
 			console.error('Form elements not found');
 			return;
 		}
 		
 		const url = urlInput.value;
+		const protocol = protocolSelect.value;
 		const username = usernameInput.value;
 		const password = passwordInput.value;
 		
@@ -73,6 +79,7 @@
 		vscode.postMessage({
 			type: 'connect',
 			url: url,
+			protocol: protocol,
 			username: username,
 			password: password
 		});
@@ -171,6 +178,19 @@
 		
 		// Enable connect button when all credentials are provided
 		connectBtn.disabled = !(url && username && password);
+	}
+	
+	function handleProtocolChange() {
+		const protocolSelect = document.getElementById('protocol');
+		if (!protocolSelect) {
+			return;
+		}
+		
+		const selectedProtocol = protocolSelect.value;
+		console.log('Protocol changed to:', selectedProtocol);
+		
+		// Could add protocol-specific validation or UI changes here
+		// For example, show different help text or warnings
 	}
 	
 	function handleMessage(event) {
