@@ -36,8 +36,10 @@
   "bugs": {
     "url": "https://github.com/Sinlyu/automate-webdav/issues"
   },
-  "activationEvents": [],
-  "main": "./dist/web/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/desktop/extension.js",
   "browser": "./dist/web/extension.js",
   "contributes": {
     "languages": [
@@ -137,15 +139,30 @@
       {
         "command": "automate-webdav.searchSymbols",
         "title": "Search PHP Symbols in WebDAV Workspace"
+      },
+      {
+        "command": "automate-webdav.createAction",
+        "title": "Create Action"
       }
-    ]
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "automate-webdav.createAction",
+          "when": "explorerResourceIsFolder && resourceScheme == webdav && (resourcePath =~ /.*\\/plugins\\/actions$/ || resourcePath =~ /.*\\/actions\\/.*$/)",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "test": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=. --extensionTestsPath=dist/web/test/suite/index.js",
     "pretest": "npm run compile",
     "vscode:prepublish": "npm run package",
     "compile": "webpack",
+    "compile-desktop": "webpack --config webpack.desktop.config.js",
     "watch": "webpack --watch",
+    "watch-desktop": "webpack --config webpack.desktop.config.js --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
     "package-web": "npm run package && vsce package --target web",
     "package-win32-x64": "npm run package && vsce package --target win32-x64",
@@ -156,6 +173,11 @@
     "test-vsix-simple": "npm run package-web && code --install-extension $(ls automate-webdav-web-*.vsix | head -1) --force",
     "uninstall-vsix": "code --uninstall-extension Sinlyu.automate-webdav",
     "lint": "eslint src",
+    "dev": "npm run compile-desktop && ./scripts/dev.sh",
+    "dev-insiders": "npm run compile-desktop && code-insiders --extensionDevelopmentPath=. --new-window --disable-extensions",
+    "dev-stable": "npm run compile-desktop && code --extensionDevelopmentPath=. --new-window --disable-extensions",
+    "dev-watch": "npm run watch-desktop",
+    "dev-clean": "npm run compile-desktop && ./scripts/dev.sh",
     "run-in-browser": "vscode-test-web --browserType=chromium --browserOption=--disable-web-security --browserOption=--disable-features=VizDisplayCompositor --browserOption=--disable-gpu --browserOption=--disable-dev-shm-usage --extensionDevelopmentPath=. ."
   },
   "devDependencies": {

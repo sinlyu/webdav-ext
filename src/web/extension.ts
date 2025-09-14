@@ -22,6 +22,7 @@ import { TestVirtualFileCommand } from './commands/testVirtualFileCommand';
 import { TestGoToDefinitionCommand } from './commands/testGoToDefinitionCommand';
 import { SearchFilesCommand, SearchTextCommand, SearchSymbolsCommand } from './commands/searchCommand';
 import { DebugFileSystemCommand } from './commands/debugFileSystemCommand';
+import { CreateActionCommand } from './commands/createActionCommand';
 
 
 
@@ -383,6 +384,10 @@ export function activate(context: vscode.ExtensionContext) {
 	const debugFileSystemCommand = commandManager.registerCommand('automate-webdav.debugFileSystem', 
 		new DebugFileSystemCommand(globalPlaceholderProvider, globalFileIndex, debugLog));
 
+	const createActionCommand = commandManager.registerCommand('automate-webdav.createAction', 
+		new CreateActionCommand(context, globalPlaceholderProvider, debugLog));
+
+
 	context.subscriptions.push(showDebugCommand);
 	context.subscriptions.push(refreshWorkspaceCommand);
 	context.subscriptions.push(addStubFileCommand);
@@ -393,6 +398,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(searchTextCommand);
 	context.subscriptions.push(searchSymbolsCommand);
 	context.subscriptions.push(debugFileSystemCommand);
+	context.subscriptions.push(createActionCommand);
 }
 
 // This method is called when your extension is deactivated
